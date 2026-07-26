@@ -62,11 +62,15 @@ class ConfigDefaultsTest {
         assertFalse(manager.getChunkSectionConfig().enabled());
         assertEquals(6, manager.getChunkSectionConfig().raycastRadiusChunks());
         assertEquals(4, manager.getChunkSectionConfig().alwaysShowRadiusChunks());
-        assertEquals(1, manager.getChunkSectionConfig().alwaysShowVerticalSections());
+        assertEquals(1, manager.getChunkSectionConfig().alwaysShowVerticalDown());
+        assertEquals(12, manager.getChunkSectionConfig().alwaysShowVerticalUp());
         assertEquals(2, manager.getChunkSectionConfig().maxOccludingCount());
         assertEquals(5, manager.getChunkSectionConfig().visibleRecheckIntervalTicks());
+        assertEquals(10, manager.getChunkSectionConfig().hiddenRecheckIntervalTicks());
         assertEquals(3, manager.getChunkSectionConfig().hideDelayTicks());
         assertTrue(manager.getChunkSectionConfig().neighborPadding());
+        assertTrue(manager.getChunkSectionConfig().hideAsAir());
+        assertEquals(2, manager.getDebugConfig().chunkSectionDebugVerticalDown());
     }
 
     @Test

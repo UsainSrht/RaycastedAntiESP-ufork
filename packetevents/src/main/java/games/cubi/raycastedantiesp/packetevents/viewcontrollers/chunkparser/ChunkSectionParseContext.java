@@ -10,17 +10,44 @@ public final class ChunkSectionParseContext {
     private final Locatable viewerEye;
     private final UUID viewerWorld;
     private final int alwaysShowRadiusChunks;
-    private final int alwaysShowVerticalSections;
+    private final int alwaysShowVerticalDown;
+    private final int alwaysShowVerticalUp;
+    private final boolean hideAsAir;
 
     public ChunkSectionParseContext(Locatable viewerEye, int alwaysShowRadiusChunks) {
-        this(viewerEye, alwaysShowRadiusChunks, 1);
+        this(viewerEye, alwaysShowRadiusChunks, 1, 12, true);
     }
 
     public ChunkSectionParseContext(Locatable viewerEye, int alwaysShowRadiusChunks, int alwaysShowVerticalSections) {
+        this(viewerEye, alwaysShowRadiusChunks, alwaysShowVerticalSections, Math.max(alwaysShowVerticalSections, 12), true);
+    }
+
+    public ChunkSectionParseContext(
+            Locatable viewerEye,
+            int alwaysShowRadiusChunks,
+            int alwaysShowVerticalDown,
+            int alwaysShowVerticalUp
+    ) {
+        this(viewerEye, alwaysShowRadiusChunks, alwaysShowVerticalDown, alwaysShowVerticalUp, true);
+    }
+
+    public ChunkSectionParseContext(
+            Locatable viewerEye,
+            int alwaysShowRadiusChunks,
+            int alwaysShowVerticalDown,
+            int alwaysShowVerticalUp,
+            boolean hideAsAir
+    ) {
         this.viewerEye = viewerEye;
         this.viewerWorld = viewerEye == null ? null : viewerEye.world();
         this.alwaysShowRadiusChunks = Math.max(0, alwaysShowRadiusChunks);
-        this.alwaysShowVerticalSections = Math.max(0, alwaysShowVerticalSections);
+        this.alwaysShowVerticalDown = Math.max(0, alwaysShowVerticalDown);
+        this.alwaysShowVerticalUp = Math.max(0, alwaysShowVerticalUp);
+        this.hideAsAir = hideAsAir;
+    }
+
+    public boolean hideAsAir() {
+        return hideAsAir;
     }
 
     public boolean isWithinAlwaysShow(UUID packetWorld, int chunkX, int sectionY, int chunkZ) {
@@ -33,7 +60,7 @@ public final class ChunkSectionParseContext {
         return ChunkSectionVisibilityUtil.isWithinAlwaysShow(
                 viewerChunkX, viewerSectionY, viewerChunkZ,
                 chunkX, sectionY, chunkZ,
-                alwaysShowRadiusChunks, alwaysShowVerticalSections
+                alwaysShowRadiusChunks, alwaysShowVerticalDown, alwaysShowVerticalUp
         );
     }
 }

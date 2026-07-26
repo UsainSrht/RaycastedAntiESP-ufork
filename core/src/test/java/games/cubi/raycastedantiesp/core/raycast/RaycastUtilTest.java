@@ -38,6 +38,34 @@ class RaycastUtilTest {
         assertEquals(0.5, particles.positions.getFirst().z());
     }
 
+    @Test
+    void sectionDebugClearStrideReducesClearParticles() {
+        UUID world = UUID.randomUUID();
+        Locatable start = new ImmutableLocatableImpl(world, 0.5, 8.5, 0.5);
+        ImmutableSpatialImpl end = new ImmutableSpatialImpl(40.5, 8.5, 0.5);
+        RecordingParticleSpawner dense = new RecordingParticleSpawner();
+        RecordingParticleSpawner sparse = new RecordingParticleSpawner();
+        BlockView empty = emptyBlockView();
+
+        RaycastUtil.raycastUntilSectionEntry(
+                start, end, 2, 0, 0, 2, 0, 64, true, empty, 1, dense, null,
+                ParticleSpawner.Colour.SECTION_HIDE_STEP,
+                ParticleSpawner.Colour.SECTION_HIDE_OCCLUDER,
+                ParticleSpawner.Colour.SECTION_SHOW_ENTRY,
+                1
+        );
+        RaycastUtil.raycastUntilSectionEntry(
+                start, end, 2, 0, 0, 2, 0, 64, true, empty, 1, sparse, null,
+                ParticleSpawner.Colour.SECTION_HIDE_STEP,
+                ParticleSpawner.Colour.SECTION_HIDE_OCCLUDER,
+                ParticleSpawner.Colour.SECTION_SHOW_ENTRY,
+                4
+        );
+
+        assertTrue(sparse.positions.size() < dense.positions.size());
+        assertTrue(sparse.positions.size() * 3 <= dense.positions.size());
+    }
+
     private static BlockView emptyBlockView() {
         return (BlockView) Proxy.newProxyInstance(
                 BlockView.class.getClassLoader(),
@@ -59,6 +87,11 @@ class RaycastUtilTest {
         public void spawnParticleAt(UUID world, Spatial spatial, Colour colour) {
             worlds.add(world);
             positions.add(new ImmutableSpatialImpl(spatial.x(), spatial.y(), spatial.z()));
+        }
+
+        @Override
+        public void spawnParticleAtForViewer(UUID viewer, UUID world, Spatial spatial, Colour colour) {
+            spawnParticleAt(world, spatial, colour);
         }
     }
 }

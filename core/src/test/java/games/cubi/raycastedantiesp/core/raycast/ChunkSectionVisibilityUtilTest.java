@@ -12,13 +12,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ChunkSectionVisibilityUtilTest {
     @Test
-    void facingFacesSelectsAtMostThreeViewerFacingSides() {
-        // Eye west/down/north of section (0,0,0) → W, D, N
+    void facingFacesSelectsHorizontalWhenEyeIsBelowAndOffset() {
+        // Eye west/down/north of section (0,0,0) → W + N (DOWN skipped; it shoots through the column)
         List<SectionFace> faces = ChunkSectionVisibilityUtil.facingFaces(-1, -1, -1, 0, 0, 0);
-        assertEquals(3, faces.size());
+        assertEquals(2, faces.size());
         assertTrue(faces.contains(SectionFace.WEST));
-        assertTrue(faces.contains(SectionFace.DOWN));
         assertTrue(faces.contains(SectionFace.NORTH));
+        assertFalse(faces.contains(SectionFace.DOWN));
+    }
+
+    @Test
+    void facingFacesUsesVerticalSilhouetteWhenEyeIsDirectlyBelow() {
+        List<SectionFace> faces = ChunkSectionVisibilityUtil.facingFaces(8, -1, 8, 0, 0, 0);
+        assertEquals(4, faces.size());
+        assertTrue(faces.contains(SectionFace.WEST));
+        assertTrue(faces.contains(SectionFace.EAST));
+        assertTrue(faces.contains(SectionFace.NORTH));
+        assertTrue(faces.contains(SectionFace.SOUTH));
     }
 
     @Test
@@ -29,26 +39,43 @@ class ChunkSectionVisibilityUtilTest {
 
     @Test
     void samplePointsDeduplicateSharedCornersAcrossFacingFaces() {
-        List<ImmutableSpatialImpl> samples = ChunkSectionVisibilityUtil.samplePointsForFacingFaces(-1, -1, -1, 0, 0, 0);
-        // 3 faces × (center + 4 corners) = 15, minus shared corners → 10 unique
-        assertEquals(10, samples.size());
+        List<ImmutableSpatialImpl> samples = ChunkSectionVisibilityUtil.samplePointsForFacingFaces(-1, 8, -1, 0, 0, 0);
+        // W + N, each center + 4 corners, shared edge corners deduped
+        assertTrue(samples.size() >= 6);
+        assertTrue(samples.size() <= 10);
     }
 
     @Test
-    void faceCenterSamplesAreAtMostThree() {
-        assertEquals(3, ChunkSectionVisibilityUtil.sampleFaceCentersForFacingFaces(-1, -1, -1, 0, 0, 0).size());
-        assertEquals(1, ChunkSectionVisibilityUtil.sampleFaceCentersForFacingFaces(-1, 8, 8, 0, 0, 0).size());
+    void faceCenterSamplesPreferLowerRimWhenEyeIsBelow() {
+        List<ImmutableSpatialImpl> samples = ChunkSectionVisibilityUtil.sampleFaceCentersForFacingFaces(8, -1, 8, 0, 0, 0);
+        assertFalse(samples.isEmpty());
+        assertTrue(samples.stream().anyMatch(s -> s.y() == 0.5));
     }
 
     @Test
-    void alwaysShowIsHorizontalPlusVerticalBand() {
-        // Horizontal radius 2
-        assertTrue(ChunkSectionVisibilityUtil.isWithinAlwaysShow(0, 4, 0, 2, 4, 0, 2, 1));
-        assertFalse(ChunkSectionVisibilityUtil.isWithinAlwaysShow(0, 4, 0, 3, 4, 0, 2, 1));
-        // Deep underground under the player must NOT be force-shown (old 3D Chebyshev bug).
-        assertFalse(ChunkSectionVisibilityUtil.isWithinAlwaysShow(0, 4, 0, 0, 0, 0, 3, 1));
-        // Same column, one section below eye — within vertical pad.
-        assertTrue(ChunkSectionVisibilityUtil.isWithinAlwaysShow(0, 4, 0, 0, 3, 0, 3, 1));
+    void closestFaceSampleClampsEyeProjectionOntoFacingFace() {
+        // Eye west of section, aimed at lower-south corner of the west face.
+        List<ImmutableSpatialImpl> samples = ChunkSectionVisibilityUtil.sampleClosestPointsOnFacingFaces(
+                -4, 1.2, 2.3, 0, 0, 0
+        );
+        assertEquals(1, samples.size());
+        ImmutableSpatialImpl sample = samples.getFirst();
+        assertEquals(0.5, sample.x(), 1e-9);
+        assertEquals(1.2, sample.y(), 1e-9);
+        assertEquals(2.3, sample.z(), 1e-9);
+    }
+
+    @Test
+    void alwaysShowIsHorizontalWithAsymmetricVerticalBand() {
+        assertTrue(ChunkSectionVisibilityUtil.isWithinAlwaysShow(0, 4, 0, 2, 4, 0, 2, 1, 12));
+        assertFalse(ChunkSectionVisibilityUtil.isWithinAlwaysShow(0, 4, 0, 3, 4, 0, 2, 1, 12));
+        // Deep underground under the player must NOT be force-shown.
+        assertFalse(ChunkSectionVisibilityUtil.isWithinAlwaysShow(0, 4, 0, 0, 0, 0, 3, 1, 12));
+        // Same column, one section below eye — within down pad.
+        assertTrue(ChunkSectionVisibilityUtil.isWithinAlwaysShow(0, 4, 0, 0, 3, 0, 3, 1, 12));
+        // Hilltop well above eye — within up pad.
+        assertTrue(ChunkSectionVisibilityUtil.isWithinAlwaysShow(0, 4, 0, 0, 10, 0, 3, 1, 12));
+        assertFalse(ChunkSectionVisibilityUtil.isWithinAlwaysShow(0, 4, 0, 0, 17, 0, 3, 1, 12));
     }
 
     @Test

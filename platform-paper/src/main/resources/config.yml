@@ -30,18 +30,24 @@ checks:
         max-occluding-count: 3
         always-play-radius: 8
         raycast-radius: 48
-    # Requires block-processor.track-all-blocks: true and a full restart. Hidden sections are sent as empty air.
+    # Requires block-processor.track-all-blocks: true and a full restart.
     chunk-section:
         enabled: false
-        max-occluding-count: 2
-        # Horizontal Chebyshev only (chunks). Vertical is controlled separately so caves under you are not force-shown.
-        always-show-radius-chunks: 4
-        always-show-vertical-sections: 1
-        raycast-radius-chunks: 6
+        max-occluding-count: 3
+        # Horizontal Chebyshev only (chunks). Vertical is asymmetric: small down (caves), large up (hilltops).
+        always-show-radius-chunks: 1
+        always-show-vertical-down: 1
+        always-show-vertical-up: 1
+        raycast-radius-chunks: 10
         # How often visible sections are re-tested. 0/-1 = every tick (expensive). Prefer 5–10.
         visible-recheck-interval-ticks: 5
+        # How often hidden sections are re-tested. 0/-1 = every tick. Prefer 10+.
+        hidden-recheck-interval-ticks: 10
         hide-delay-ticks: 3
         neighbor-padding: true
+        # true = hidden sections sent as empty air (default).
+        # false = stone/deepslate solid placeholder (avoids stuck white chunk-fade on some clients when revealed).
+        hide-as-air: true
 engine:
     mode: async
     async:
@@ -62,4 +68,7 @@ debug:
     error-level: 5
     error-exempted-classes:
     particles: false
+    # Chunk-section ray visuals are toggled in-game: /antiesp debug-chunk-sections (not this flag).
+    # Only paint HIDE rays for sections within this many section-Y steps below the viewer (deeper caves skipped).
+    chunk-section-debug-vertical-down: 2
     timings: false

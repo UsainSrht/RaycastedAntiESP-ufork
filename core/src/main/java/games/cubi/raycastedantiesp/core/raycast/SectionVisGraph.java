@@ -11,8 +11,12 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 /**
  * Face-to-face air connectivity within a 16³ section.
  * Packed as 36 bits: bit (fromFace * 6 + toFace) means a non-occluding path connects those faces.
+ * <p>
+ * {@link #FULLY_OPEN} means air connects every face to every other face — <em>not</em> “section is empty”.
+ * Surface sections with dirt/grass and open sky are often {@link #FULLY_OPEN} while still containing occluders.
  */
 public final class SectionVisGraph {
+    /** Complete face↔face air graph. Not a synonym for “no occluding blocks”. */
     public static final long FULLY_OPEN = computeFullyOpenMask();
     public static final long SOLID = 0L;
     private static final int ALL_FACES = (1 << SectionFace.COUNT) - 1;
@@ -117,10 +121,12 @@ public final class SectionVisGraph {
     }
 
     /**
-     * BFS through adjacent sections using cached face connectivity. Used as a HIDE-only filter for
-     * unreachable <em>air</em> volumes. Solid shells stay candidates for face sampling.
+     * BFS through adjacent sections using cached face connectivity.
+     * <p>
+     * Callers must treat untracked / empty-air sections as {@link #FULLY_OPEN} (raycast pass-through),
+     * not {@link #SOLID}. Using {@link #SOLID} for missing sections walls off side-LOS through open air.
      *
-     * @param connectivityOf packed section key → connectivity mask ({@link #SOLID} if unknown)
+     * @param connectivityOf packed section key → connectivity mask ({@link #FULLY_OPEN} for untracked air)
      * @param outReachable   cleared then filled with packed section keys
      */
     public static void collectReachable(
@@ -187,6 +193,40 @@ public final class SectionVisGraph {
                 outReachable.add(nKey);
                 queueKeys.add(nKey);
                 queueEntryFaces.add(merged);
+            }
+        }
+    }
+
+    /**
+     * Builds the raycast frontier: reachable sections plus their 6 face-neighbors within
+     * {@code maxChebyshevRadius} of the eye. The shell keeps SOLID rock faces that border open air
+     * as raycast candidates while allowing hard auto-hide of everything farther behind.
+     *
+     * @param outFrontier cleared then filled with {@code reachable ∪ face-adjacent shell}
+     */
+    public static void collectFrontier(
+            int eyeChunkX,
+            int eyeSectionY,
+            int eyeChunkZ,
+            int maxChebyshevRadius,
+            LongOpenHashSet reachable,
+            LongOpenHashSet outFrontier
+    ) {
+        outFrontier.clear();
+        outFrontier.addAll(reachable);
+        for (long key : reachable) {
+            int cx = ChunkSectionStore.unpackChunkX(key);
+            int sy = ChunkSectionStore.unpackSectionY(key);
+            int cz = ChunkSectionStore.unpackChunkZ(key);
+            for (SectionFace face : SectionFace.values()) {
+                int nx = cx + face.nx();
+                int ny = sy + face.ny();
+                int nz = cz + face.nz();
+                if (ChunkSectionVisibilityUtil.chebyshevSectionDistance(
+                        eyeChunkX, eyeSectionY, eyeChunkZ, nx, ny, nz) > maxChebyshevRadius) {
+                    continue;
+                }
+                outFrontier.add(ChunkSectionStore.packChunkCoords(nx, ny, nz));
             }
         }
     }

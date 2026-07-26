@@ -16,10 +16,15 @@ import games.cubi.locatables.api.Spatial;
 import games.cubi.locatables.implementations.MutableLocatableImpl;
 import games.cubi.locatables.implementations.MutableSpatialImpl;
 import games.cubi.logs.Logger;
+import games.cubi.raycastedantiesp.core.chunks.BlockChunkData;
+import games.cubi.raycastedantiesp.core.chunks.ChunkData;
 import games.cubi.raycastedantiesp.core.config.ConfigManager;
+import games.cubi.raycastedantiesp.core.config.raycast.ChunkSectionConfig;
 import games.cubi.raycastedantiesp.core.tracked.TrackedEntity;
 import games.cubi.raycastedantiesp.core.players.PlayerData;
 import games.cubi.raycastedantiesp.core.players.PlayerRegistry;
+import games.cubi.raycastedantiesp.core.raycast.ChunkSectionLosProbe;
+import games.cubi.raycastedantiesp.core.raycast.ChunkSectionStatusReport;
 import games.cubi.raycastedantiesp.core.raycast.RaycastUtil;
 import games.cubi.raycastedantiesp.core.view.AbstractBlockView;
 import games.cubi.raycastedantiesp.core.view.EntityView;
@@ -39,11 +44,16 @@ import net.strokkur.commands.permission.Permission;
 
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
+import org.bukkit.block.data.BlockData;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
 
+import com.github.retrooper.packetevents.protocol.world.states.WrappedBlockState;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.UUID;
 
 // Credit to Strokkur for making StrokkCommands, a non-hideous way to use the power of brigadier.
@@ -62,7 +72,36 @@ public class RaycastedAntiESPCommand {
         sender.sendRichMessage("<green>/raycastedantiesp set <key> <value> <gray>- Sets a config value");
         sender.sendRichMessage("<green>/raycastedantiesp add <key> <value> <gray>- Adds a value to a list config");
         sender.sendRichMessage("<green>/raycastedantiesp remove <key> <value> <gray>- Removes a value from a list config");
+        sender.sendRichMessage("<green>/raycastedantiesp debug-chunk-sections <gray>- Toggle chunk-section raycast particles (you only)");
+        sender.sendRichMessage("<green>/raycastedantiesp test chunk-section <x> <y> <z> [player] <gray>- Test LOS to a section (block xyz)");
+        sender.sendRichMessage("<green>/raycastedantiesp test status-chunk-section [player] <gray>- Snapshot chunk-section show/hide + raycast stats");
         sender.sendRichMessage(Attribution.attributionCommandDescription); //Using constant from Attribution class to ensure that it cannot be deleted without the developer noticing that they are obligated to replace it with an equivalent notice.
+    }
+
+    @Executes("debug-chunk-sections")
+    void debugChunkSectionsCommand(CommandSender sender) {
+        if (!(sender instanceof Player player)) {
+            sender.sendRichMessage("<red>[RaycastedAntiESP] This command can only be used in-game.");
+            return;
+        }
+        PlayerData data = PlayerRegistry.getInstance().getPlayerData(player.getUniqueId());
+        if (data == null) {
+            sender.sendRichMessage("<red>[RaycastedAntiESP] Player data not loaded yet.");
+            return;
+        }
+        if (!ConfigManager.get().getChunkSectionConfig().enabled()) {
+            sender.sendRichMessage("<yellow>[RaycastedAntiESP] checks.chunk-section.enabled is false — enable it to see rays.");
+        }
+        boolean enabled = data.toggleChunkSectionRayDebug();
+        if (enabled) {
+            int debugDown = ConfigManager.get().getDebugConfig().chunkSectionDebugVerticalDown();
+            sender.sendRichMessage("<green>[RaycastedAntiESP] Chunk-section ray debug <white>ON <gray>(HIDE rays, closest first, every 5 ticks)");
+            sender.sendRichMessage("<gray>HIDE: <gold>orange path</gold> / <red>red occluder</red> / <light_purple>magenta sample");
+            sender.sendRichMessage("<gray>Skip sections > <white>" + debugDown + "<gray> below (debug.chunk-section-debug-vertical-down)");
+            sender.sendRichMessage("<gray>For one section: <white>/reo test chunk-section <x> <y> <z>");
+        } else {
+            sender.sendRichMessage("<red>[RaycastedAntiESP] Chunk-section ray debug <white>OFF");
+        }
     }
 
     @Executes("reload")
@@ -199,6 +238,147 @@ public class RaycastedAntiESPCommand {
             player.sendMessage(pbsm.loadedChunkCount() +"chunks loaded");
         }
 
+        @Executes("chunk-section")
+        void testChunkSectionSelf(int x, int y, int z, CommandSender sender) {
+            if (!(sender instanceof Player player)) {
+                sender.sendRichMessage("<red>[RaycastedAntiESP] Specify a player: /reo test chunk-section <x> <y> <z> <player>");
+                return;
+            }
+            testChunkSection(sender, player, x, y, z);
+        }
+
+        @Executes("chunk-section")
+        void testChunkSectionOther(int x, int y, int z, Player target, CommandSender sender) {
+            testChunkSection(sender, target, x, y, z);
+        }
+
+        @Executes("status-chunk-section")
+        void statusChunkSectionSelf(CommandSender sender) {
+            if (!(sender instanceof Player player)) {
+                sender.sendRichMessage("<red>[RaycastedAntiESP] Specify a player: /reo test status-chunk-section <player>");
+                return;
+            }
+            statusChunkSection(sender, player);
+        }
+
+        @Executes("status-chunk-section")
+        void statusChunkSectionOther(CommandSender sender, Player target) {
+            statusChunkSection(sender, target);
+        }
+
+        private void statusChunkSection(CommandSender sender, Player viewer) {
+            PlayerData playerData = PlayerRegistry.getInstance().getPlayerData(viewer.getUniqueId());
+            if (playerData == null) {
+                reportChunkSectionLine(sender, "Player data not loaded for " + describeViewer(viewer.getUniqueId()) + ".");
+                return;
+            }
+            Locatable eye = playerData.ownLocation();
+            if (eye == null || eye.world() == null) {
+                reportChunkSectionLine(sender, "Viewer has no location yet.");
+                return;
+            }
+            ChunkSectionConfig sectionConfig = ConfigManager.get().getChunkSectionConfig();
+            if (!sectionConfig.enabled()) {
+                reportChunkSectionLine(sender, "checks.chunk-section.enabled is false — enable it for live culling.");
+            }
+
+            reportChunkSectionLine(sender, "----- chunk-section status (scanning…) -----");
+            reportChunkSectionLine(sender, "viewer=" + describeViewer(viewer.getUniqueId()));
+            final CommandSender reportTo = sender;
+            final PlayerData data = playerData;
+            final Locatable eyeSnapshot = eye;
+            final ChunkSectionConfig configSnapshot = sectionConfig;
+            Bukkit.getAsyncScheduler().runNow(RaycastedAntiESP.get(), (ignored) -> {
+                ChunkSectionStatusReport report = ChunkSectionStatusReport.collect(
+                        eyeSnapshot, configSnapshot, data.blockView()
+                );
+                PaperScheduler.runForAudience(RaycastedAntiESP.get(), reportTo, () -> sendStatusReport(reportTo, report));
+            });
+        }
+
+        private static void sendStatusReport(CommandSender sender, ChunkSectionStatusReport report) {
+            reportChunkSectionLine(sender, "sections total=" + report.total()
+                    + " shown=" + report.shown()
+                    + " hidden=" + report.hidden());
+            reportChunkSectionLine(sender, "raycasts cast=" + report.raycastsCast()
+                    + " succeeded=" + report.raycastsSucceeded()
+                    + " occluded=" + report.raycastsOccluded()
+                    + " skippedHide=" + report.skippedRaycastHide());
+            if (report.hideReasons().isEmpty()) {
+                reportChunkSectionLine(sender, "hideReasons=(none)");
+            } else {
+                StringBuilder reasons = new StringBuilder("hideReasons=");
+                boolean first = true;
+                for (Map.Entry<String, Integer> entry : report.hideReasons().entrySet()) {
+                    if (!first) {
+                        reasons.append(' ');
+                    }
+                    first = false;
+                    reasons.append(entry.getKey()).append(' ').append(entry.getValue()).append('x');
+                }
+                reportChunkSectionLine(sender, reasons.toString());
+            }
+            reportChunkSectionLine(sender, "----- end chunk-section status -----");
+        }
+
+        private void testChunkSection(CommandSender sender, Player viewer, int blockX, int blockY, int blockZ) {
+            PlayerData playerData = PlayerRegistry.getInstance().getPlayerData(viewer.getUniqueId());
+            if (playerData == null) {
+                reportChunkSectionLine(sender, "Player data not loaded for " + describeViewer(viewer.getUniqueId()) + ".");
+                return;
+            }
+            Locatable eye = playerData.ownLocation();
+            if (eye == null || eye.world() == null) {
+                reportChunkSectionLine(sender, "Viewer has no location yet.");
+                return;
+            }
+            ChunkSectionConfig sectionConfig = ConfigManager.get().getChunkSectionConfig();
+            if (!sectionConfig.enabled()) {
+                reportChunkSectionLine(sender, "checks.chunk-section.enabled is false — enable it for live culling.");
+            }
+
+            int chunkX = blockX >> 4;
+            int sectionY = blockY >> 4;
+            int chunkZ = blockZ >> 4;
+            ChunkSectionLosProbe.Decision decision = ChunkSectionLosProbe.evaluate(
+                    eye, blockX, blockY, blockZ, sectionConfig, playerData.blockView()
+            );
+
+            reportChunkSectionLine(sender, "----- chunk-section LOS test -----");
+            reportChunkSectionLine(sender, "viewer=" + describeViewer(viewer.getUniqueId()));
+            reportChunkSectionLine(sender, "block=" + blockX + " " + blockY + " " + blockZ
+                    + " → section=" + chunkX + " " + sectionY + " " + chunkZ);
+            reportChunkSectionLine(sender, "tracked=" + decision.trackedPresent()
+                    + " clientVisible=" + decision.trackedVisible());
+            reportChunkSectionLine(sender, "decision=" + (decision.wouldShow() ? "SHOW" : "HIDE")
+                    + " reason=" + decision.reason());
+            if (decision.trackedVisible() && !decision.wouldShow()) {
+                reportChunkSectionLine(sender, "note=client still visible while LOS says HIDE (sticky recheck / neighbor-padding / hide-delay)");
+            }
+            reportChunkSectionLine(sender, "eyeInside=" + decision.eyeInside()
+                    + " alwaysShow=" + decision.alwaysShow()
+                    + " inRadius=" + decision.withinRaycastRadius()
+                    + " fullyOpen=" + decision.fullyOpen()
+                    + " visGraphAutoHide=" + decision.visGraphAutoHide()
+                    + " visGraphUnreachableBelow=" + decision.visGraphUnreachableBelow()
+                    + " raycast=" + decision.raycastLos());
+            sendSectionContentSummary(sender, playerData, chunkX, sectionY, chunkZ, decision.fullyOpen());
+
+            boolean raysOn = playerData.toggleChunkSectionRayDebugTarget(chunkX, sectionY, chunkZ);
+            if (raysOn) {
+                reportChunkSectionLine(sender, "focused ray debug=ON (only this section, every 5 ticks)");
+            } else {
+                reportChunkSectionLine(sender, "focused ray debug=OFF");
+            }
+            reportChunkSectionLine(sender, "----- end chunk-section LOS test -----");
+        }
+
+        /** Chat + plain console line (easy to copy from server log). */
+        private static void reportChunkSectionLine(CommandSender sender, String plain) {
+            sender.sendMessage("[RaycastedAntiESP] " + plain);
+            Logger.info("[chunk-section-test] " + plain, 1, RaycastedAntiESPCommand.class);
+        }
+
         @Executes("entity-id")
         void getFromEntityID(int entityID, Player player) {
             PlayerData playerData = PlayerRegistry.getInstance().getPlayerData(player.getUniqueId());
@@ -314,12 +494,70 @@ public class RaycastedAntiESPCommand {
             return player == null ? playerUUID.toString() : player.getName() + " (" + playerUUID + ")";
         }
 
+        /**
+         * Reports what the plugin stored for the section. {@code fullyOpen} means zero occluding cells
+         * in that store — non-occluding blocks (leaves, snow, glass, …) still count as “has blocks”.
+         */
+        private void sendSectionContentSummary(CommandSender sender, PlayerData playerData, int chunkX, int sectionY, int chunkZ, boolean fullyOpen) {
+            BlockChunkData data = playerData.blockView().getBlockChunkData(chunkX, sectionY, chunkZ);
+            if (data == null) {
+                reportChunkSectionLine(sender, "stored=none (air / not in block store)");
+                return;
+            }
+            int nonAir = 0;
+            int occluding = 0;
+            Map<Integer, Integer> topIds = new LinkedHashMap<>();
+            for (int packed = 0; packed < ChunkData.BLOCK_COUNT; packed++) {
+                int lx = ChunkData.unpackX(packed);
+                int ly = ChunkData.unpackY(packed);
+                int lz = ChunkData.unpackZ(packed);
+                int blockId = data.getBlockID(lx, ly, lz);
+                if (blockId != 0) {
+                    nonAir++;
+                    topIds.merge(blockId, 1, Integer::sum);
+                }
+                if (data.isOccludingLocal(lx, ly, lz)) {
+                    occluding++;
+                }
+            }
+            reportChunkSectionLine(sender, "storedCells nonAir=" + nonAir
+                    + " occluding=" + occluding + " total=" + ChunkData.BLOCK_COUNT);
+            if (fullyOpen) {
+                reportChunkSectionLine(sender, "fullyOpen=air connects all 6 faces (not 'empty'); occluding="
+                        + occluding + " nonAir=" + nonAir);
+            }
+            reportChunkSectionLine(sender, "topBlocks=" + formatTopBlockStates(topIds, 5));
+        }
+
+        private static String formatTopBlockStates(Map<Integer, Integer> counts, int limit) {
+            return counts.entrySet().stream()
+                    .sorted((a, b) -> Integer.compare(b.getValue(), a.getValue()))
+                    .limit(limit)
+                    .map(e -> describeBlockState(e.getKey()) + "×" + e.getValue())
+                    .reduce((a, b) -> a + ", " + b)
+                    .orElse("(none)");
+        }
+
+        private static String describeBlockState(int blockStateId) {
+            try {
+                BlockData blockData = SpigotConversionUtil.toBukkitBlockData(WrappedBlockState.getByGlobalId(blockStateId));
+                if (blockData != null) {
+                    return blockData.getMaterial().name() + "(" + blockStateId + ")";
+                }
+            } catch (RuntimeException ignored) {
+                // fall through
+            }
+            return "id:" + blockStateId;
+        }
+
         @DefaultExecutes
         public void helpCommand(@NotNull CommandSender sender) {
             sender.sendRichMessage("<white>Test subcommands:");
             sender.sendRichMessage("<green>/raycastedantiesp test location-drift <gray>- Tests the drift between Bukkit and PacketEvents entity locations");
             sender.sendRichMessage("<green>/raycastedantiesp test benchmark <gray>- Benchmarks raycast speed by raycasting to 1000 random locatables around the player and printing the average time taken");
             sender.sendRichMessage("<green>/raycastedantiesp test loaded-chunks <gray>- Shows the number of chunks currently loaded in the player's block view");
+            sender.sendRichMessage("<green>/raycastedantiesp test chunk-section <x> <y> <z> [player] <gray>- Test LOS to the section containing block xyz; toggles focused rays");
+            sender.sendRichMessage("<green>/raycastedantiesp test status-chunk-section [player] <gray>- Snapshot shown/hidden sections, raycast outcomes, and hide-reason counts");
             sender.sendRichMessage("<green>/raycastedantiesp test entity-id <entity ID> [player] <gray>- Finds an entity by ID in one player's views, or in all player views when no player is supplied");
             sender.sendRichMessage("<green>/raycastedantiesp test entity-uuid <entity> <gray>- Shows Bukkit data and all tracked view data for a native entity selection or UUID");
         }

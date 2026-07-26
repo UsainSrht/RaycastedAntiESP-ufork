@@ -84,7 +84,7 @@ abstract class AbstractChunkParser<D> implements ChunkParser {
                 if (trackedSection != null && !trackedSection.visible()) {
                     hideSectionOnWire = true;
                     sectionHiddenOnWire[sectionIndex] = true;
-                    sections[sectionIndex] = emptySectionKeepingBiomes(section);
+                    sections[sectionIndex] = hiddenSectionKeepingBiomes(section, sectionY, sectionContext.hideAsAir());
                     mutatedSection = true;
                 }
             }
@@ -174,9 +174,15 @@ abstract class AbstractChunkParser<D> implements ChunkParser {
     }
 
     @SuppressWarnings("deprecation")
-    private Chunk_v1_18 emptySectionKeepingBiomes(Chunk_v1_18 original) {
-        DataPalette airBlocks = new DataPalette(new SingletonPalette(0), null, PaletteType.CHUNK);
-        return new Chunk_v1_18(0, 0, airBlocks, original.getBiomeData());
+    private Chunk_v1_18 hiddenSectionKeepingBiomes(Chunk_v1_18 original, int sectionY, boolean hideAsAir) {
+        if (hideAsAir) {
+            DataPalette airBlocks = new DataPalette(new SingletonPalette(0), null, PaletteType.CHUNK);
+            return new Chunk_v1_18(0, 0, airBlocks, original.getBiomeData());
+        }
+        // Solid placeholder: empty→filled LevelChunk updates leave some clients stuck in chunk fade.
+        int hiddenBlockId = hiddenBlockID.applyAsInt(sectionY << 4);
+        DataPalette solidBlocks = new DataPalette(new SingletonPalette(hiddenBlockId), null, PaletteType.CHUNK);
+        return new Chunk_v1_18(ChunkData.BLOCK_COUNT, 0, solidBlocks, original.getBiomeData());
     }
 
     private boolean sectionMayContainManagedTiles(Chunk_v1_18 section) {

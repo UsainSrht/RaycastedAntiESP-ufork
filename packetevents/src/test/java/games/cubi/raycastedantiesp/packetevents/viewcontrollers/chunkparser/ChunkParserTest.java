@@ -14,6 +14,7 @@ import games.cubi.locatables.implementations.ImmutableBlockLocatable;
 import games.cubi.locatables.implementations.ImmutableBlockSpatialImpl;
 import games.cubi.locatables.implementations.MutableBlockLocatable;
 import games.cubi.raycastedantiesp.core.chunks.BlockInfoResolver;
+import games.cubi.raycastedantiesp.core.chunks.ChunkData;
 import games.cubi.raycastedantiesp.core.tracked.TrackedChunkSection;
 import games.cubi.raycastedantiesp.core.tracked.TrackedTileEntity;
 import games.cubi.raycastedantiesp.packetevents.view.PacketEventsBlockView;
@@ -317,7 +318,7 @@ class ChunkParserTest {
     }
 
     @Test
-    void sectionContextHidesOccludedSectionAsEmptyWhileKeepingStoredBlocks() {
+    void sectionContextHidesOccludedSectionAsAirByDefaultWhileKeepingStoredBlocks() {
         UUID world = UUID.randomUUID();
         Chunk_v1_18 section = airSection();
         section.set(3, 2, 1, 1);
@@ -330,7 +331,7 @@ class ChunkParserTest {
                 2
         );
 
-        Column replacement = new NonMutatingBlockChunkParser(RESOLVER, ignored -> 1)
+        Column replacement = new NonMutatingBlockChunkParser(RESOLVER, ignored -> 7)
                 .parse(view, world, column, 0, context);
 
         assertNotNull(replacement);
@@ -340,6 +341,34 @@ class ChunkParserTest {
         TrackedChunkSection tracked = view.getTrackedChunkSection(world, 10, 0, 10);
         assertNotNull(tracked);
         assertFalse(tracked.visible());
+    }
+
+    @Test
+    void sectionContextHidesOccludedSectionAsSolidWhenHideAsAirDisabled() {
+        UUID world = UUID.randomUUID();
+        Chunk_v1_18 section = airSection();
+        section.set(3, 2, 1, 1);
+        Column column = new Column(10, 10, true, new BaseChunk[]{section}, new TileEntity[0]);
+        PacketEventsBlockView view = new PacketEventsBlockView(RESOLVER, true, STABLE_WORLD_EPOCH);
+        view.applyChunkSectionCheckMode(true, 0);
+        ChunkSectionParseContext context = new ChunkSectionParseContext(
+                new MutableBlockLocatable(world, 0, 8, 0),
+                2,
+                1,
+                12,
+                false
+        );
+
+        Column replacement = new NonMutatingBlockChunkParser(RESOLVER, ignored -> 7)
+                .parse(view, world, column, 0, context);
+
+        assertNotNull(replacement);
+        Chunk_v1_18 wire = (Chunk_v1_18) replacement.getChunks()[0];
+        assertFalse(wire.isEmpty());
+        assertEquals(ChunkData.BLOCK_COUNT, wire.getBlockCount());
+        assertEquals(7, wire.getBlockId(0, 0, 0));
+        assertEquals(7, wire.getBlockId(3, 2, 1));
+        assertFalse(view.getTrackedChunkSection(world, 10, 0, 10).visible());
     }
 
     @Test

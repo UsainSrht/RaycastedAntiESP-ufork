@@ -170,7 +170,9 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
                     ? new ChunkSectionParseContext(
                     playerData.ownLocation(),
                     chunkSectionConfig.alwaysShowRadiusChunks(),
-                    chunkSectionConfig.alwaysShowVerticalSections()
+                    chunkSectionConfig.alwaysShowVerticalDown(),
+                    chunkSectionConfig.alwaysShowVerticalUp(),
+                    chunkSectionConfig.hideAsAir()
             )
                     : null;
             Column column = packet.getColumn();
@@ -210,10 +212,7 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
                 biomes[i] = chunk.getBiomeData();
             }
         }
-        LightData lightClone = null;
-        if (lightData != null) {
-            lightClone = lightData.clone();
-        }
+        LightData lightClone = prepareLightForResend(lightData);
         NBTCompound heightMapsNbt = column.hasHeightMaps() ? column.getHeightMaps() : null;
         Map<HeightmapType, long[]> heightmapsMap = column.getHeightmaps();
         CachedWireColumn cached = new CachedWireColumn(
@@ -245,7 +244,7 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
             if (sectionChecksEnabled) {
                 ensureTrackedSection(blockView, world, key, playerLocation, sectionChecksEnabled);
                 if (!blockView.isChunkSectionVisible(world, key.chunkX(), key.chunkY(), key.chunkZ())) {
-                    change.setBlockId(0);
+                    change.setBlockId(sectionHiddenWireBlockId(key.blockY()));
                     event.markForReEncode(true);
                     if (tileEntity) {
                         blockView.updateOrInsertTileEntity(world, key, blockID, false);
@@ -378,13 +377,13 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
             if (visible) {
                 sections[i] = buildWireSection(blockView.getBlockChunkData(cached.chunkX(), sectionY, cached.chunkZ()), biomes);
             } else {
-                sections[i] = emptyWireSection(biomes);
+                sections[i] = hiddenWireSection(biomes, sectionY);
             }
         }
         Column column = buildColumn(cached, sections);
-        LightData light = cached.lightData();
+        LightData light = prepareLightForResend(cached.lightData());
         if (light != null) {
-            viewer.writePacketSilently(new WrapperPlayServerChunkData(column, light.clone()));
+            viewer.writePacketSilently(new WrapperPlayServerChunkData(column, light));
         } else {
             viewer.writePacketSilently(new WrapperPlayServerChunkData(column));
         }
@@ -401,19 +400,39 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
         return new Column(cached.chunkX(), cached.chunkZ(), true, sections, tiles);
     }
 
-    private static Chunk_v1_18 emptyWireSection(DataPalette biomes) {
-        DataPalette airBlocks = new DataPalette(new SingletonPalette(0), null, PaletteType.CHUNK);
-        if (biomes != null) {
-            return new Chunk_v1_18(0, 0, airBlocks, biomes);
+    private Chunk_v1_18 hiddenWireSection(DataPalette biomes, int sectionY) {
+        if (hideSectionsAsAir()) {
+            DataPalette airBlocks = new DataPalette(new SingletonPalette(0), null, PaletteType.CHUNK);
+            if (biomes != null) {
+                return new Chunk_v1_18(0, 0, airBlocks, biomes);
+            }
+            Chunk_v1_18 section = new Chunk_v1_18();
+            section.set(0, 0, 0, 0);
+            return section;
         }
-        Chunk_v1_18 section = new Chunk_v1_18();
-        section.set(0, 0, 0, 0);
-        return section;
+        int hiddenBlockId = getHiddenBlockId(sectionY << 4);
+        DataPalette solidBlocks = new DataPalette(new SingletonPalette(hiddenBlockId), null, PaletteType.CHUNK);
+        if (biomes != null) {
+            return new Chunk_v1_18(ChunkData.BLOCK_COUNT, 0, solidBlocks, biomes);
+        }
+        return new Chunk_v1_18(ChunkData.BLOCK_COUNT, 0, solidBlocks, PaletteType.BIOME.create());
+    }
+
+    private boolean hideSectionsAsAir() {
+        return chunkSectionConfig == null || chunkSectionConfig.hideAsAir();
+    }
+
+    /** Wire block id used while a section is hidden: air (0) or stone/deepslate placeholder. */
+    private int sectionHiddenWireBlockId(int blockY) {
+        return hideSectionsAsAir() ? 0 : getHiddenBlockId(blockY);
     }
 
     private static Chunk_v1_18 buildWireSection(BlockChunkData data, DataPalette biomes) {
         if (data == null) {
-            return emptyWireSection(biomes);
+            DataPalette airBlocks = new DataPalette(new SingletonPalette(0), null, PaletteType.CHUNK);
+            return biomes != null
+                    ? new Chunk_v1_18(0, 0, airBlocks, biomes)
+                    : new Chunk_v1_18();
         }
         Chunk_v1_18 section = biomes != null
                 ? new Chunk_v1_18(0, 0, new DataPalette(new SingletonPalette(0), null, PaletteType.CHUNK), biomes)
@@ -434,6 +453,33 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
         return section;
     }
 
+    /**
+     * Clone light for a column resend. PacketEvents' {@link LightData#clone()} is shallow on the
+     * nibble arrays; deep-copy them and force trustEdges so the client finalizes lighting on replace.
+     */
+    private static LightData prepareLightForResend(LightData source) {
+        if (source == null) {
+            return null;
+        }
+        LightData light = source.clone();
+        light.setTrustEdges(true);
+        light.setSkyLightArray(deepCopyLightArrays(light.getSkyLightArray()));
+        light.setBlockLightArray(deepCopyLightArrays(light.getBlockLightArray()));
+        return light;
+    }
+
+    private static byte[][] deepCopyLightArrays(byte[][] arrays) {
+        if (arrays == null) {
+            return null;
+        }
+        byte[][] copy = new byte[arrays.length][];
+        for (int i = 0; i < arrays.length; i++) {
+            byte[] layer = arrays[i];
+            copy[i] = layer == null ? null : layer.clone();
+        }
+        return copy;
+    }
+
     private void sendSectionMultiBlockFallback(
             User viewer,
             BlockView blockView,
@@ -441,7 +487,7 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
             ChunkSectionViewTransition.Type type
     ) {
         WrapperPlayServerMultiBlockChange.EncodedBlock[] blocks = type == ChunkSectionViewTransition.Type.HIDE
-                ? buildSectionAirUpdates(blockView, section)
+                ? buildSectionHideUpdates(blockView, section)
                 : buildSectionRestoreUpdates(blockView, section);
         if (blocks.length != 0) {
             viewer.writePacketSilently(new WrapperPlayServerMultiBlockChange(
@@ -490,7 +536,7 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
                 event.setCancelled(true);
                 viewer.writePacketSilently(new WrapperPlayServerBlockChange(
                         new Vector3i(location.blockX(), location.blockY(), location.blockZ()),
-                        0
+                        sectionHiddenWireBlockId(location.blockY())
                 ));
                 if (tileEntity) {
                     playerData.blockView().updateOrInsertTileEntity(world, location, blockID, false);
@@ -528,13 +574,14 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
                     location.chunkY(),
                     location.chunkZ(),
                     chunkSectionConfig.alwaysShowRadiusChunks(),
-                    chunkSectionConfig.alwaysShowVerticalSections()
+                    chunkSectionConfig.alwaysShowVerticalDown(),
+                    chunkSectionConfig.alwaysShowVerticalUp()
             );
         }
         blockView.updateOrInsertChunkSection(world, location.chunkX(), location.chunkY(), location.chunkZ(), visibleIfNew);
     }
 
-    private WrapperPlayServerMultiBlockChange.EncodedBlock[] buildSectionAirUpdates(BlockView blockView, TrackedChunkSection section) {
+    private WrapperPlayServerMultiBlockChange.EncodedBlock[] buildSectionHideUpdates(BlockView blockView, TrackedChunkSection section) {
         BlockChunkData data = blockView.getBlockChunkData(section.chunkX(), section.sectionY(), section.chunkZ());
         if (data == null) {
             return new WrapperPlayServerMultiBlockChange.EncodedBlock[0];
@@ -546,8 +593,11 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
         for (int y = 0; y < ChunkData.CHUNK_SIZE; y++) {
             for (int z = 0; z < ChunkData.CHUNK_SIZE; z++) {
                 for (int x = 0; x < ChunkData.CHUNK_SIZE; x++) {
-                    if (data.getBlockID(x, y, z) != 0) {
-                        blocks.add(new WrapperPlayServerMultiBlockChange.EncodedBlock(0, originX + x, originY + y, originZ + z));
+                    int blockY = originY + y;
+                    int hiddenId = sectionHiddenWireBlockId(blockY);
+                    if (data.getBlockID(x, y, z) != hiddenId) {
+                        blocks.add(new WrapperPlayServerMultiBlockChange.EncodedBlock(
+                                hiddenId, originX + x, blockY, originZ + z));
                     }
                 }
             }

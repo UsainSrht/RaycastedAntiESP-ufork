@@ -8,6 +8,7 @@ import games.cubi.raycastedantiesp.core.utils.VarHandler;
 import games.cubi.raycastedantiesp.core.view.BlockView;
 import games.cubi.raycastedantiesp.core.view.EntityView;
 import games.cubi.raycastedantiesp.core.view.ViewRegistry;
+import games.cubi.raycastedantiesp.core.view.chunks.ChunkSectionStore;
 import games.cubi.raycastedantiesp.core.view.controller.PacketEntityViewController;
 
 import java.lang.invoke.VarHandle;
@@ -17,11 +18,17 @@ import java.util.function.IntSupplier;
 
 public class PlayerData {
     public static final int INVALID_WORLD_EPOCH = -1;
+    /** Sentinel: no focused section debug target from {@code /reo test chunk-section}. */
+    public static final long NO_CHUNK_SECTION_DEBUG_TARGET = Long.MIN_VALUE;
 
     private final UUID playerUUID;
     private final int joinTick;
     private volatile boolean hasBypassPermission;
     private volatile boolean connected;
+    /** Per-player visual debug for chunk-section LOS rays (in-game toggle). */
+    private volatile boolean chunkSectionRayDebug;
+    /** Packed section key for focused debug rays, or {@link #NO_CHUNK_SECTION_DEBUG_TARGET}. */
+    private volatile long chunkSectionRayDebugTarget = NO_CHUNK_SECTION_DEBUG_TARGET;
     private final ThreadSafeLocatable ownLocation;
 
     private final BlockView blockView;
@@ -179,6 +186,53 @@ public class PlayerData {
     public void setBypassPermission(boolean hasBypassPermission) {
         this.hasBypassPermission = hasBypassPermission;
     } //todo: need to link up
+
+    public boolean chunkSectionRayDebug() {
+        return chunkSectionRayDebug;
+    }
+
+    public boolean toggleChunkSectionRayDebug() {
+        chunkSectionRayDebug = !chunkSectionRayDebug;
+        if (chunkSectionRayDebug) {
+            chunkSectionRayDebugTarget = NO_CHUNK_SECTION_DEBUG_TARGET;
+        }
+        return chunkSectionRayDebug;
+    }
+
+    public void setChunkSectionRayDebug(boolean enabled) {
+        this.chunkSectionRayDebug = enabled;
+        if (enabled) {
+            chunkSectionRayDebugTarget = NO_CHUNK_SECTION_DEBUG_TARGET;
+        }
+    }
+
+    public long chunkSectionRayDebugTarget() {
+        return chunkSectionRayDebugTarget;
+    }
+
+    public boolean hasChunkSectionRayDebugTarget() {
+        return chunkSectionRayDebugTarget != NO_CHUNK_SECTION_DEBUG_TARGET;
+    }
+
+    /**
+     * Enables focused debug for {@code (chunkX, sectionY, chunkZ)}, or disables it when already targeting that section.
+     *
+     * @return {@code true} if focused debug is now on for this section
+     */
+    public boolean toggleChunkSectionRayDebugTarget(int chunkX, int sectionY, int chunkZ) {
+        long key = ChunkSectionStore.packChunkCoords(chunkX, sectionY, chunkZ);
+        if (chunkSectionRayDebugTarget == key) {
+            chunkSectionRayDebugTarget = NO_CHUNK_SECTION_DEBUG_TARGET;
+            return false;
+        }
+        chunkSectionRayDebugTarget = key;
+        chunkSectionRayDebug = false;
+        return true;
+    }
+
+    public void clearChunkSectionRayDebugTarget() {
+        chunkSectionRayDebugTarget = NO_CHUNK_SECTION_DEBUG_TARGET;
+    }
 
     @Override
     public String toString() {
