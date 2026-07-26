@@ -12,6 +12,7 @@ record TickTimingSnapshot(
         long entityNanos,
         long playerNanos,
         long tileNanos,
+        long sectionNanos,
         int processedPlayers,
         int bypassSkippedPlayers,
         int nullLocationSkippedPlayers,
@@ -24,7 +25,11 @@ record TickTimingSnapshot(
         int tileChecked,
         int tileRaycasts,
         int tileWorldSkipped,
-        int tileRadiusSkipped
+        int tileRadiusSkipped,
+        int sectionChecked,
+        int sectionRaycasts,
+        int sectionWorldSkipped,
+        int sectionRadiusSkipped
 ) {
     String toSlowTickMessage() {
         return "Tick completed slowly."
@@ -38,6 +43,7 @@ record TickTimingSnapshot(
                 + " entityProcessingTime=" + TickTimingFormatter.formatMillis(entityNanos) + "ms"
                 + " playerProcessingTime=" + TickTimingFormatter.formatMillis(playerNanos) + "ms"
                 + " tileProcessingTime=" + TickTimingFormatter.formatMillis(tileNanos) + "ms"
+                + " sectionProcessingTime=" + TickTimingFormatter.formatMillis(sectionNanos) + "ms"
                 + " playerCount=" + registeredPlayers
                 + " processedPlayers=" + processedPlayers
                 + " bypassSkippedPlayers=" + bypassSkippedPlayers
@@ -51,7 +57,11 @@ record TickTimingSnapshot(
                 + " tileRecheckCandidates=" + tileChecked
                 + " tileRaycasts=" + tileRaycasts
                 + " tileWorldSkipped=" + tileWorldSkipped
-                + " tileRadiusSkipped=" + tileRadiusSkipped;
+                + " tileRadiusSkipped=" + tileRadiusSkipped
+                + " sectionRecheckCandidates=" + sectionChecked
+                + " sectionRaycasts=" + sectionRaycasts
+                + " sectionWorldSkipped=" + sectionWorldSkipped
+                + " sectionRadiusSkipped=" + sectionRadiusSkipped;
     }
 
     String toSlowestSummary() {
@@ -60,7 +70,7 @@ record TickTimingSnapshot(
                 + ", totalWallTime=" + TickTimingFormatter.formatMillis(wallNanos) + " ms"
                 + ", schedulerWait=" + TickTimingFormatter.formatMillis(queueNanos) + " ms"
                 + ", slowestWorkerBatch=" + TickTimingFormatter.formatMillis(maxBatchNanos) + " ms"
-                + ", processingTime(entity/player/tile)=" + TickTimingFormatter.formatMillis(entityNanos) + "/" + TickTimingFormatter.formatMillis(playerNanos) + "/" + TickTimingFormatter.formatMillis(tileNanos) + " ms"
-                + ", raycasts(entity/player/tile)=" + entityRaycasts + "/" + playerRaycasts + "/" + tileRaycasts;
+                + ", processingTime(entity/player/tile/section)=" + TickTimingFormatter.formatMillis(entityNanos) + "/" + TickTimingFormatter.formatMillis(playerNanos) + "/" + TickTimingFormatter.formatMillis(tileNanos) + "/" + TickTimingFormatter.formatMillis(sectionNanos) + " ms"
+                + ", raycasts(entity/player/tile/section)=" + entityRaycasts + "/" + playerRaycasts + "/" + tileRaycasts + "/" + sectionRaycasts;
     }
 }

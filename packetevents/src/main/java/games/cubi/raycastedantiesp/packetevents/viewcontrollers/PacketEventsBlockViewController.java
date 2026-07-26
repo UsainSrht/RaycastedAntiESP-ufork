@@ -2,9 +2,18 @@ package games.cubi.raycastedantiesp.packetevents.viewcontrollers;
 
 import com.github.retrooper.packetevents.event.PacketListener;
 import com.github.retrooper.packetevents.event.PacketSendEvent;
+import com.github.retrooper.packetevents.protocol.nbt.NBTCompound;
 import com.github.retrooper.packetevents.protocol.packettype.PacketType;
 import com.github.retrooper.packetevents.protocol.player.User;
+import com.github.retrooper.packetevents.protocol.world.chunk.BaseChunk;
 import com.github.retrooper.packetevents.protocol.world.chunk.Column;
+import com.github.retrooper.packetevents.protocol.world.chunk.HeightmapType;
+import com.github.retrooper.packetevents.protocol.world.chunk.LightData;
+import com.github.retrooper.packetevents.protocol.world.chunk.TileEntity;
+import com.github.retrooper.packetevents.protocol.world.chunk.impl.v_1_18.Chunk_v1_18;
+import com.github.retrooper.packetevents.protocol.world.chunk.palette.DataPalette;
+import com.github.retrooper.packetevents.protocol.world.chunk.palette.PaletteType;
+import com.github.retrooper.packetevents.protocol.world.chunk.palette.SingletonPalette;
 import com.github.retrooper.packetevents.util.Vector3i;
 import com.github.retrooper.packetevents.wrapper.play.server.*;
 import games.cubi.locatables.api.BlockSpatial;
@@ -12,24 +21,39 @@ import games.cubi.locatables.api.Locatable;
 import games.cubi.locatables.implementations.ImmutableBlockSpatialImpl;
 import games.cubi.locatables.implementations.MutableBlockSpatialImpl;
 import games.cubi.logs.Logger;
+import games.cubi.raycastedantiesp.core.chunks.BlockChunkData;
 import games.cubi.raycastedantiesp.core.chunks.BlockInfoResolver;
+import games.cubi.raycastedantiesp.core.chunks.ChunkData;
 import games.cubi.raycastedantiesp.core.config.ConfigManager;
+import games.cubi.raycastedantiesp.core.config.raycast.ChunkSectionConfig;
 import games.cubi.raycastedantiesp.core.config.raycast.TileEntityConfig;
+import games.cubi.raycastedantiesp.core.raycast.ChunkSectionVisibilityUtil;
+import games.cubi.raycastedantiesp.core.tracked.NettyChunkSection;
 import games.cubi.raycastedantiesp.core.tracked.NettyTileEntity;
+import games.cubi.raycastedantiesp.core.tracked.TrackedChunkSection;
 import games.cubi.raycastedantiesp.core.tracked.TrackedTileEntity;
 import games.cubi.raycastedantiesp.core.players.PlayerData;
 import games.cubi.raycastedantiesp.core.players.PlayerRegistry;
 import games.cubi.raycastedantiesp.core.view.BlockView;
 import games.cubi.raycastedantiesp.core.view.BlockViewTransition;
+import games.cubi.raycastedantiesp.core.view.ChunkSectionViewTransition;
 import games.cubi.raycastedantiesp.packetevents.replaydata.PacketEventsTileEntityReplayData;
 import games.cubi.raycastedantiesp.packetevents.viewcontrollers.chunkparser.BlockChunkParser;
+import games.cubi.raycastedantiesp.packetevents.viewcontrollers.chunkparser.CachedWireColumn;
 import games.cubi.raycastedantiesp.packetevents.viewcontrollers.chunkparser.ChunkParser;
+import games.cubi.raycastedantiesp.packetevents.viewcontrollers.chunkparser.ChunkSectionParseContext;
 import games.cubi.raycastedantiesp.packetevents.viewcontrollers.chunkparser.NonMutatingBlockChunkParser;
 import games.cubi.raycastedantiesp.packetevents.viewcontrollers.chunkparser.NonMutatingOcclusionChunkParser;
 import games.cubi.raycastedantiesp.packetevents.viewcontrollers.chunkparser.OcclusionChunkParser;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.IntSupplier;
 
 public abstract class PacketEventsBlockViewController implements PacketListener {
@@ -38,7 +62,9 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
     private final ChunkParser nonMutatingChunkParser;
     private final IntSupplier currentTickSupplier;
     private final PacketEventsCommonViewController common;
+    private final Map<UUID, Long2ObjectOpenHashMap<CachedWireColumn>> wireColumnsByViewer = new ConcurrentHashMap<>();
     private TileEntityConfig tileEntityConfig = null;
+    private ChunkSectionConfig chunkSectionConfig = null;
     private int hideOnSpawnDistanceSquared = 0;
 
     protected PacketEventsBlockViewController(BlockInfoResolver blockInfoResolver, boolean trackAllBlocks, IntSupplier currentTickSupplier) {
@@ -57,6 +83,9 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
     protected abstract int getHiddenBlockId(int blockY);
 
     public void removeViewer(UUID viewerUUID) {
+        if (viewerUUID != null) {
+            wireColumnsByViewer.remove(viewerUUID);
+        }
     }
 
     @Override
@@ -66,9 +95,13 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
             return;
         }
 
-        if (!(ConfigManager.get().getTileEntityConfig() == tileEntityConfig)) {
-            tileEntityConfig = ConfigManager.get().getTileEntityConfig();
+        ConfigManager config = ConfigManager.get();
+        if (config.getTileEntityConfig() != tileEntityConfig) {
+            tileEntityConfig = config.getTileEntityConfig();
             hideOnSpawnDistanceSquared = tileEntityConfig.hideOnSpawnDistance() * tileEntityConfig.hideOnSpawnDistance();
+        }
+        if (config.getChunkSectionConfig() != chunkSectionConfig) {
+            chunkSectionConfig = config.getChunkSectionConfig();
         }
 
         PlayerData playerData = PlayerRegistry.getInstance().getPlayerData(viewerUUID);
@@ -79,16 +112,21 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
         UUID world = common.resolvePacketWorld(playerData, event.getUser());
         int currentTick = currentTickSupplier.getAsInt();
         boolean tileChecksEnabled = tileEntityConfig.enabled();
+        boolean sectionChecksEnabled = chunkSectionConfig.enabled();
         playerData.blockView().applyTileEntityCheckMode(tileChecksEnabled, currentTick);
+        playerData.blockView().applyChunkSectionCheckMode(sectionChecksEnabled, currentTick);
 
-        handleBlockPackets(event, event.getUser(), playerData, world, currentTick, tileChecksEnabled);
+        handleBlockPackets(event, event.getUser(), viewerUUID, playerData, world, currentTick, tileChecksEnabled, sectionChecksEnabled);
 
         if (playerData.blockView().hasPendingTransitions()) {
             processTileEntityTransitions(event.getUser(), playerData);
         }
+        if (playerData.blockView().hasPendingSectionTransitions()) {
+            processChunkSectionTransitions(event.getUser(), playerData);
+        }
     }
 
-    private void handleBlockPackets(PacketSendEvent event, User viewer, PlayerData playerData, UUID world, int currentTick, boolean tileChecksEnabled) {
+    private void handleBlockPackets(PacketSendEvent event, User viewer, UUID viewerUUID, PlayerData playerData, UUID world, int currentTick, boolean tileChecksEnabled, boolean sectionChecksEnabled) {
         if (world == null) {
             return;
         }
@@ -97,16 +135,20 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
 
         if (event.getPacketType() == PacketType.Play.Server.UNLOAD_CHUNK) {
             WrapperPlayServerUnloadChunk packet = new WrapperPlayServerUnloadChunk(event);
-            removeChunk(packet, blockView, world);
+            removeChunk(viewerUUID, packet, blockView, world);
         } else if (event.getPacketType() == PacketType.Play.Server.BLOCK_CHANGE) {
             WrapperPlayServerBlockChange packet = new WrapperPlayServerBlockChange(event);
-            handleSingleBlockChange(event, viewer, playerData, world, packet, tileChecksEnabled);
+            handleSingleBlockChange(event, viewer, playerData, world, packet, tileChecksEnabled, sectionChecksEnabled);
         } else if (event.getPacketType() == PacketType.Play.Server.MULTI_BLOCK_CHANGE) {
             WrapperPlayServerMultiBlockChange packet = new WrapperPlayServerMultiBlockChange(event);
-            handleMultiBlockChange(event, blockView, world, packet, playerData.ownLocation(), tileChecksEnabled);
+            handleMultiBlockChange(event, blockView, world, packet, playerData.ownLocation(), tileChecksEnabled, sectionChecksEnabled);
         } else if (event.getPacketType() == PacketType.Play.Server.BLOCK_ENTITY_DATA) {
             WrapperPlayServerBlockEntityData packet = new WrapperPlayServerBlockEntityData(event);
             ImmutableBlockSpatialImpl position = new ImmutableBlockSpatialImpl(packet.getPosition().getX(), packet.getPosition().getY(), packet.getPosition().getZ());
+            if (sectionChecksEnabled && !blockView.isChunkSectionVisible(world, position.chunkX(), position.chunkY(), position.chunkZ())) {
+                event.setCancelled(true);
+                return;
+            }
             TrackedTileEntity<PacketEventsTileEntityReplayData> tileEntity = getTrackedTileEntity(blockView, world, position);
             if (tileEntity == null) {
                 // This can be triggered by things such as virtual signs
@@ -120,12 +162,25 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
             }
         } else if (event.getPacketType() == PacketType.Play.Server.CHUNK_DATA) {
             WrapperPlayServerChunkData packet = new WrapperPlayServerChunkData(event);
+            // Tile mutation uses the mutating parser. Section-only mode keeps tiles non-mutating but still redacts
+            // sections via sectionContext inside AbstractChunkParser.
             ChunkParser parser = tileChecksEnabled ? mutatingChunkParser : nonMutatingChunkParser;
-            @Nullable Column result = parser.parse(blockView, world, packet.getColumn(), playerData.nettyData().getCurrentWorldMinHeight() >> 4);
+            int minimumSectionY = playerData.nettyData().getCurrentWorldMinHeight() >> 4;
+            ChunkSectionParseContext sectionContext = sectionChecksEnabled
+                    ? new ChunkSectionParseContext(
+                    playerData.ownLocation(),
+                    chunkSectionConfig.alwaysShowRadiusChunks(),
+                    chunkSectionConfig.alwaysShowVerticalSections()
+            )
+                    : null;
+            Column column = packet.getColumn();
+            @Nullable Column result = parser.parse(blockView, world, column, minimumSectionY, sectionContext);
             if (result != null) {
                 packet.setColumn(result);
                 event.markForReEncode(true);
+                column = result;
             }
+            cacheWireColumn(viewerUUID, column, packet.getLightData(), minimumSectionY);
 
         } else if (event.getPacketType() == PacketType.Play.Server.MAP_CHUNK_BULK) {
             WrapperPlayServerChunkDataBulk packet = new WrapperPlayServerChunkDataBulk(event);
@@ -133,17 +188,73 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
         }
     }
 
-    private void removeChunk(WrapperPlayServerUnloadChunk packet, BlockView blockView, UUID world) {
+    private void removeChunk(UUID viewerUUID, WrapperPlayServerUnloadChunk packet, BlockView blockView, UUID world) {
         blockView.removeChunk(world, packet.getChunkX(), packet.getChunkZ());
+        Long2ObjectOpenHashMap<CachedWireColumn> columns = wireColumnsByViewer.get(viewerUUID);
+        if (columns != null) {
+            columns.remove(packColumnKey(packet.getChunkX(), packet.getChunkZ()));
+        }
     }
 
-    private void handleMultiBlockChange(PacketSendEvent event, BlockView blockView, UUID world, WrapperPlayServerMultiBlockChange packet, Locatable playerLocation, boolean tileChecksEnabled) {
+    private void cacheWireColumn(UUID viewerUUID, Column column, LightData lightData, int minimumSectionY) {
+        if (viewerUUID == null || column == null) {
+            return;
+        }
+        BaseChunk[] sections = column.getChunks();
+        if (sections == null) {
+            return;
+        }
+        DataPalette[] biomes = new DataPalette[sections.length];
+        for (int i = 0; i < sections.length; i++) {
+            if (sections[i] instanceof Chunk_v1_18 chunk) {
+                biomes[i] = chunk.getBiomeData();
+            }
+        }
+        LightData lightClone = null;
+        if (lightData != null) {
+            lightClone = lightData.clone();
+        }
+        NBTCompound heightMapsNbt = column.hasHeightMaps() ? column.getHeightMaps() : null;
+        Map<HeightmapType, long[]> heightmapsMap = column.getHeightmaps();
+        CachedWireColumn cached = new CachedWireColumn(
+                column.getX(),
+                column.getZ(),
+                minimumSectionY,
+                biomes,
+                lightClone,
+                heightMapsNbt,
+                heightmapsMap,
+                column.getTileEntities()
+        );
+        wireColumnsByViewer
+                .computeIfAbsent(viewerUUID, ignored -> new Long2ObjectOpenHashMap<>())
+                .put(packColumnKey(column.getX(), column.getZ()), cached);
+    }
+
+    private static long packColumnKey(int chunkX, int chunkZ) {
+        return ((long) chunkX << 32) ^ (chunkZ & 0xffffffffL);
+    }
+
+    private void handleMultiBlockChange(PacketSendEvent event, BlockView blockView, UUID world, WrapperPlayServerMultiBlockChange packet, Locatable playerLocation, boolean tileChecksEnabled, boolean sectionChecksEnabled) {
         MutableBlockSpatialImpl key = new MutableBlockSpatialImpl(0, 0, 0);
         for (WrapperPlayServerMultiBlockChange.EncodedBlock change : packet.getBlocks()) {
             char blockID = (char) change.getBlockId();
             boolean tileEntity = blockInfoResolver.isTileEntity(blockID);
             blockView.upsertBlock(world, change.getX(), change.getY(), change.getZ(), blockID);
             key.setBlockPosition(change.getX(), change.getY(), change.getZ());
+            if (sectionChecksEnabled) {
+                ensureTrackedSection(blockView, world, key, playerLocation, sectionChecksEnabled);
+                if (!blockView.isChunkSectionVisible(world, key.chunkX(), key.chunkY(), key.chunkZ())) {
+                    change.setBlockId(0);
+                    event.markForReEncode(true);
+                    if (tileEntity) {
+                        blockView.updateOrInsertTileEntity(world, key, blockID, false);
+                    } else {
+                        blockView.removeTileEntity(world, key);
+                    }
+                    continue;
+                }
+            }
             if (tileEntity) {
                 boolean visibleIfNew = !tileChecksEnabled || visibleIfNew(key, playerLocation, world);
                 TrackedTileEntity<?> state = blockView.updateOrInsertTileEntity(world, key, blockID, visibleIfNew);
@@ -167,6 +278,17 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
             TrackedTileEntity<PacketEventsTileEntityReplayData> state = resolveCurrentTransitionState(transition, worldEpoch);
             if (state == null || state.blockID() == 0) {
                 continue;
+            }
+            Locatable ownLocation = playerData.ownLocation();
+            UUID viewerWorld = ownLocation == null ? null : ownLocation.world();
+            if (chunkSectionConfig != null && chunkSectionConfig.enabled()
+                    && viewerWorld != null
+                    && !blockView.isChunkSectionVisible(viewerWorld, location.chunkX(), location.chunkY(), location.chunkZ())) {
+                // Terrain section is still hidden; tile SHOW would leak through air. Skip until the section is shown.
+                if (transition.type() == BlockViewTransition.Type.SHOW) {
+                    state.setLastChecked(TrackedTileEntity.NEVER_CHECKED);
+                    continue;
+                }
             }
             switch (transition.type()) {
                 case HIDE -> {
@@ -194,13 +316,190 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
         }
     }
 
-    private void handleSingleBlockChange(PacketSendEvent event, User viewer, PlayerData playerData, UUID world, WrapperPlayServerBlockChange packet, boolean tileChecksEnabled) {
+    private void processChunkSectionTransitions(User viewer, PlayerData playerData) {
+        BlockView blockView = playerData.blockView();
+        int worldEpoch = playerData.acquireWorldEpoch();
+        Locatable ownLocation = playerData.ownLocation();
+        UUID world = ownLocation == null ? null : ownLocation.world();
+        UUID viewerUUID = viewer.getUUID();
+        LongOpenHashSet columnsToResend = new LongOpenHashSet();
+        List<ChunkSectionViewTransition> applied = new ArrayList<>();
+
+        for (ChunkSectionViewTransition transition : blockView.drainSectionTransitions()) {
+            TrackedChunkSection section = resolveCurrentSectionTransitionState(transition, worldEpoch);
+            if (section == null) {
+                continue;
+            }
+            if (transition.type() == ChunkSectionViewTransition.Type.HIDE
+                    && !blockView.isCurrentEnabledChunkSectionMode(transition.modeToken())) {
+                section.setVisible(true);
+                section.setLastChecked(TrackedChunkSection.NEVER_CHECKED);
+                continue;
+            }
+            columnsToResend.add(packColumnKey(section.chunkX(), section.chunkZ()));
+            applied.add(transition);
+        }
+
+        Long2ObjectOpenHashMap<CachedWireColumn> wireColumns = wireColumnsByViewer.get(viewerUUID);
+        for (long columnKey : columnsToResend) {
+            CachedWireColumn cached = wireColumns == null ? null : wireColumns.get(columnKey);
+            if (cached == null) {
+                // Fallback: per-section multiblock if we never saw CHUNK_DATA for this column.
+                for (ChunkSectionViewTransition transition : applied) {
+                    TrackedChunkSection section = transition.section();
+                    if (packColumnKey(section.chunkX(), section.chunkZ()) != columnKey) {
+                        continue;
+                    }
+                    sendSectionMultiBlockFallback(viewer, blockView, section, transition.type());
+                }
+                continue;
+            }
+            sendColumnVisibilityUpdate(viewer, blockView, world, cached);
+        }
+
+        for (ChunkSectionViewTransition transition : applied) {
+            TrackedChunkSection section = transition.section();
+            boolean show = transition.type() == ChunkSectionViewTransition.Type.SHOW;
+            if (show) {
+                requeueTilesInSection(blockView, world, section);
+                resendTileEntitiesInSection(viewer, blockView, world, section);
+            }
+            PacketEventsEntityViewController.get().applyChunkSectionEntityGate(
+                    viewer, playerData, section.chunkX(), section.sectionY(), section.chunkZ(), show);
+        }
+    }
+
+    private void sendColumnVisibilityUpdate(User viewer, BlockView blockView, UUID world, CachedWireColumn cached) {
+        BaseChunk[] sections = new BaseChunk[cached.sectionCount()];
+        for (int i = 0; i < sections.length; i++) {
+            int sectionY = cached.minimumSectionY() + i;
+            boolean visible = world == null || blockView.isChunkSectionVisible(world, cached.chunkX(), sectionY, cached.chunkZ());
+            DataPalette biomes = cached.biomePalette(i);
+            if (visible) {
+                sections[i] = buildWireSection(blockView.getBlockChunkData(cached.chunkX(), sectionY, cached.chunkZ()), biomes);
+            } else {
+                sections[i] = emptyWireSection(biomes);
+            }
+        }
+        Column column = buildColumn(cached, sections);
+        LightData light = cached.lightData();
+        if (light != null) {
+            viewer.writePacketSilently(new WrapperPlayServerChunkData(column, light.clone()));
+        } else {
+            viewer.writePacketSilently(new WrapperPlayServerChunkData(column));
+        }
+    }
+
+    private static Column buildColumn(CachedWireColumn cached, BaseChunk[] sections) {
+        TileEntity[] tiles = cached.tileEntities();
+        if (cached.heightMapsNbt() != null) {
+            return new Column(cached.chunkX(), cached.chunkZ(), true, sections, tiles, cached.heightMapsNbt());
+        }
+        if (cached.heightmapsMap() != null) {
+            return new Column(cached.chunkX(), cached.chunkZ(), true, sections, tiles, cached.heightmapsMap());
+        }
+        return new Column(cached.chunkX(), cached.chunkZ(), true, sections, tiles);
+    }
+
+    private static Chunk_v1_18 emptyWireSection(DataPalette biomes) {
+        DataPalette airBlocks = new DataPalette(new SingletonPalette(0), null, PaletteType.CHUNK);
+        if (biomes != null) {
+            return new Chunk_v1_18(0, 0, airBlocks, biomes);
+        }
+        Chunk_v1_18 section = new Chunk_v1_18();
+        section.set(0, 0, 0, 0);
+        return section;
+    }
+
+    private static Chunk_v1_18 buildWireSection(BlockChunkData data, DataPalette biomes) {
+        if (data == null) {
+            return emptyWireSection(biomes);
+        }
+        Chunk_v1_18 section = biomes != null
+                ? new Chunk_v1_18(0, 0, new DataPalette(new SingletonPalette(0), null, PaletteType.CHUNK), biomes)
+                : new Chunk_v1_18();
+        if (biomes == null) {
+            section.set(0, 0, 0, 0);
+        }
+        for (int y = 0; y < ChunkData.CHUNK_SIZE; y++) {
+            for (int z = 0; z < ChunkData.CHUNK_SIZE; z++) {
+                for (int x = 0; x < ChunkData.CHUNK_SIZE; x++) {
+                    char blockID = data.getBlockID(x, y, z);
+                    if (blockID != 0) {
+                        section.set(x, y, z, blockID);
+                    }
+                }
+            }
+        }
+        return section;
+    }
+
+    private void sendSectionMultiBlockFallback(
+            User viewer,
+            BlockView blockView,
+            TrackedChunkSection section,
+            ChunkSectionViewTransition.Type type
+    ) {
+        WrapperPlayServerMultiBlockChange.EncodedBlock[] blocks = type == ChunkSectionViewTransition.Type.HIDE
+                ? buildSectionAirUpdates(blockView, section)
+                : buildSectionRestoreUpdates(blockView, section);
+        if (blocks.length != 0) {
+            viewer.writePacketSilently(new WrapperPlayServerMultiBlockChange(
+                    new Vector3i(section.chunkX(), section.sectionY(), section.chunkZ()),
+                    false,
+                    blocks
+            ));
+        }
+    }
+
+    private void resendTileEntitiesInSection(User viewer, BlockView blockView, UUID world, TrackedChunkSection section) {
+        if (world == null) {
+            return;
+        }
+        int originX = section.chunkX() << 4;
+        int originY = section.sectionY() << 4;
+        int originZ = section.chunkZ() << 4;
+        MutableBlockSpatialImpl key = new MutableBlockSpatialImpl(0, 0, 0);
+        for (int y = 0; y < ChunkData.CHUNK_SIZE; y++) {
+            for (int z = 0; z < ChunkData.CHUNK_SIZE; z++) {
+                for (int x = 0; x < ChunkData.CHUNK_SIZE; x++) {
+                    key.setBlockPosition(originX + x, originY + y, originZ + z);
+                    TrackedTileEntity<PacketEventsTileEntityReplayData> tile = getTrackedTileEntity(blockView, world, key);
+                    if (tile == null || !tile.visible()) {
+                        continue;
+                    }
+                    PacketEventsTileEntityReplayData replayData = tile.extraData();
+                    if (replayData != null && replayData.blockEntityType() != null && replayData.nbt() != null) {
+                        viewer.writePacketSilently(buildBlockEntityDataPacket(key, replayData));
+                    }
+                }
+            }
+        }
+    }
+
+    private void handleSingleBlockChange(PacketSendEvent event, User viewer, PlayerData playerData, UUID world, WrapperPlayServerBlockChange packet, boolean tileChecksEnabled, boolean sectionChecksEnabled) {
         char blockID = (char) packet.getBlockId();
         boolean tileEntity = blockInfoResolver.isTileEntity(blockID);
         Vector3i position = packet.getBlockPosition();
         ImmutableBlockSpatialImpl location = new ImmutableBlockSpatialImpl(position.getX(), position.getY(), position.getZ());
 
         playerData.blockView().upsertBlock(world, position.getX(), position.getY(), position.getZ(), blockID);
+        if (sectionChecksEnabled) {
+            ensureTrackedSection(playerData.blockView(), world, location, playerData.ownLocation(), true);
+            if (!playerData.blockView().isChunkSectionVisible(world, location.chunkX(), location.chunkY(), location.chunkZ())) {
+                event.setCancelled(true);
+                viewer.writePacketSilently(new WrapperPlayServerBlockChange(
+                        new Vector3i(location.blockX(), location.blockY(), location.blockZ()),
+                        0
+                ));
+                if (tileEntity) {
+                    playerData.blockView().updateOrInsertTileEntity(world, location, blockID, false);
+                } else {
+                    playerData.blockView().removeTileEntity(world, location);
+                }
+                return;
+            }
+        }
         if (tileEntity) {
             boolean visibleIfNew = !tileChecksEnabled || visibleIfNew(location, playerData.ownLocation(), world);
             TrackedTileEntity<?> state = playerData.blockView().updateOrInsertTileEntity(world, location, blockID, visibleIfNew);
@@ -212,6 +511,90 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
             }
         } else {
             playerData.blockView().removeTileEntity(world, location);
+        }
+    }
+
+    private void ensureTrackedSection(BlockView blockView, UUID world, BlockSpatial location, Locatable playerLocation, boolean sectionChecksEnabled) {
+        if (!sectionChecksEnabled) {
+            return;
+        }
+        boolean visibleIfNew = false;
+        if (playerLocation != null && playerLocation.world() != null && playerLocation.world().equals(world)) {
+            visibleIfNew = ChunkSectionVisibilityUtil.isWithinAlwaysShow(
+                    playerLocation.blockX() >> 4,
+                    playerLocation.blockY() >> 4,
+                    playerLocation.blockZ() >> 4,
+                    location.chunkX(),
+                    location.chunkY(),
+                    location.chunkZ(),
+                    chunkSectionConfig.alwaysShowRadiusChunks(),
+                    chunkSectionConfig.alwaysShowVerticalSections()
+            );
+        }
+        blockView.updateOrInsertChunkSection(world, location.chunkX(), location.chunkY(), location.chunkZ(), visibleIfNew);
+    }
+
+    private WrapperPlayServerMultiBlockChange.EncodedBlock[] buildSectionAirUpdates(BlockView blockView, TrackedChunkSection section) {
+        BlockChunkData data = blockView.getBlockChunkData(section.chunkX(), section.sectionY(), section.chunkZ());
+        if (data == null) {
+            return new WrapperPlayServerMultiBlockChange.EncodedBlock[0];
+        }
+        List<WrapperPlayServerMultiBlockChange.EncodedBlock> blocks = new ArrayList<>();
+        int originX = section.chunkX() << 4;
+        int originY = section.sectionY() << 4;
+        int originZ = section.chunkZ() << 4;
+        for (int y = 0; y < ChunkData.CHUNK_SIZE; y++) {
+            for (int z = 0; z < ChunkData.CHUNK_SIZE; z++) {
+                for (int x = 0; x < ChunkData.CHUNK_SIZE; x++) {
+                    if (data.getBlockID(x, y, z) != 0) {
+                        blocks.add(new WrapperPlayServerMultiBlockChange.EncodedBlock(0, originX + x, originY + y, originZ + z));
+                    }
+                }
+            }
+        }
+        return blocks.toArray(WrapperPlayServerMultiBlockChange.EncodedBlock[]::new);
+    }
+
+    private WrapperPlayServerMultiBlockChange.EncodedBlock[] buildSectionRestoreUpdates(BlockView blockView, TrackedChunkSection section) {
+        BlockChunkData data = blockView.getBlockChunkData(section.chunkX(), section.sectionY(), section.chunkZ());
+        if (data == null) {
+            return new WrapperPlayServerMultiBlockChange.EncodedBlock[0];
+        }
+        List<WrapperPlayServerMultiBlockChange.EncodedBlock> blocks = new ArrayList<>();
+        int originX = section.chunkX() << 4;
+        int originY = section.sectionY() << 4;
+        int originZ = section.chunkZ() << 4;
+        for (int y = 0; y < ChunkData.CHUNK_SIZE; y++) {
+            for (int z = 0; z < ChunkData.CHUNK_SIZE; z++) {
+                for (int x = 0; x < ChunkData.CHUNK_SIZE; x++) {
+                    char blockID = data.getBlockID(x, y, z);
+                    if (blockID != 0) {
+                        blocks.add(new WrapperPlayServerMultiBlockChange.EncodedBlock(blockID, originX + x, originY + y, originZ + z));
+                    }
+                }
+            }
+        }
+        return blocks.toArray(WrapperPlayServerMultiBlockChange.EncodedBlock[]::new);
+    }
+
+    private void requeueTilesInSection(BlockView blockView, UUID world, TrackedChunkSection section) {
+        if (world == null) {
+            return;
+        }
+        int originX = section.chunkX() << 4;
+        int originY = section.sectionY() << 4;
+        int originZ = section.chunkZ() << 4;
+        MutableBlockSpatialImpl key = new MutableBlockSpatialImpl(0, 0, 0);
+        for (int y = 0; y < ChunkData.CHUNK_SIZE; y++) {
+            for (int z = 0; z < ChunkData.CHUNK_SIZE; z++) {
+                for (int x = 0; x < ChunkData.CHUNK_SIZE; x++) {
+                    key.setBlockPosition(originX + x, originY + y, originZ + z);
+                    TrackedTileEntity<?> tile = blockView.getTrackedTileEntity(world, key);
+                    if (tile != null) {
+                        tile.setLastChecked(TrackedTileEntity.NEVER_CHECKED);
+                    }
+                }
+            }
         }
     }
 
@@ -253,6 +636,15 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
             return null;
         }
         return (TrackedTileEntity<PacketEventsTileEntityReplayData>) transition.tileEntity();
+    }
+
+    static @Nullable TrackedChunkSection resolveCurrentSectionTransitionState(ChunkSectionViewTransition transition, int currentWorldEpoch) {
+        if (transition.worldEpoch() != currentWorldEpoch
+                || !(transition.section() instanceof NettyChunkSection section)
+                || section.isRemoved()) {
+            return null;
+        }
+        return section;
     }
 
     private PacketEventsTileEntityReplayData ensureTileReplayData(TrackedTileEntity<PacketEventsTileEntityReplayData> tileEntity) {

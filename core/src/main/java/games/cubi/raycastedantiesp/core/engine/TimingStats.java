@@ -14,6 +14,7 @@ public class TimingStats {
     private final LongArrayList entityWorkerSamples = new LongArrayList();
     private final LongArrayList playerWorkerSamples = new LongArrayList();
     private final LongArrayList tileWorkerSamples = new LongArrayList();
+    private final LongArrayList sectionWorkerSamples = new LongArrayList();
 
     private long intervalStartNanos = 0;
     private long nextReportNanos = 0;
@@ -24,6 +25,7 @@ public class TimingStats {
     private long entityRaycastsTotal = 0;
     private long playerRaycastsTotal = 0;
     private long tileRaycastsTotal = 0;
+    private long sectionRaycastsTotal = 0;
 
     private TickTimingSnapshot slowestTick = null;
 
@@ -37,6 +39,7 @@ public class TimingStats {
         entityWorkerSamples.clear();
         playerWorkerSamples.clear();
         tileWorkerSamples.clear();
+        sectionWorkerSamples.clear();
         intervalStartNanos = 0;
         nextReportNanos = 0;
         completedTicks = 0;
@@ -45,6 +48,7 @@ public class TimingStats {
         entityRaycastsTotal = 0;
         playerRaycastsTotal = 0;
         tileRaycastsTotal = 0;
+        sectionRaycastsTotal = 0;
         slowestTick = null;
     }
 
@@ -63,10 +67,12 @@ public class TimingStats {
         entityWorkerSamples.add(snapshot.entityNanos());
         playerWorkerSamples.add(snapshot.playerNanos());
         tileWorkerSamples.add(snapshot.tileNanos());
+        sectionWorkerSamples.add(snapshot.sectionNanos());
 
         entityRaycastsTotal += snapshot.entityRaycasts();
         playerRaycastsTotal += snapshot.playerRaycasts();
         tileRaycastsTotal += snapshot.tileRaycasts();
+        sectionRaycastsTotal += snapshot.sectionRaycasts();
 
         if (slowestTick == null || snapshot.wallNanos() > slowestTick.wallNanos()) {
             slowestTick = snapshot;
@@ -118,8 +124,9 @@ public class TimingStats {
                 + "Worker section times are summed across worker batches for multi-threaded ticks, not wall-clock critical-path time.\n"
                 + "Worker time spent checking entities per completed tick (avg / p50 / p95 / max): " + formatStats(entityWorkerSamples) + "\n"
                 + "Worker time spent checking players per completed tick (avg / p50 / p95 / max): " + formatStats(playerWorkerSamples) + "\n"
-                + "Worker time spent checking tile entities per completed tick (avg / p50 / p95 / max): " + formatStats(tileWorkerSamples) + "\n\n"
-                + "Total raycasts performed, entity / player / tile: " + entityRaycastsTotal + " / " + playerRaycastsTotal + " / " + tileRaycastsTotal + "\n"
+                + "Worker time spent checking tile entities per completed tick (avg / p50 / p95 / max): " + formatStats(tileWorkerSamples) + "\n"
+                + "Worker time spent checking chunk sections per completed tick (avg / p50 / p95 / max): " + formatStats(sectionWorkerSamples) + "\n\n"
+                + "Total raycasts performed, entity / player / tile / section: " + entityRaycastsTotal + " / " + playerRaycastsTotal + " / " + tileRaycastsTotal + " / " + sectionRaycastsTotal + "\n"
                 + "Slowest tick in this interval: " + slowestSummary;
     }
 

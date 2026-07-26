@@ -56,6 +56,8 @@ public abstract class PacketEventsEntityViewController extends PacketEntityViewC
 
     private final IntSupplier CURRENT_TICK_SUPPLIER;
     private final PacketEventsCommonViewController COMMON;
+    /** Set for the duration of {@link #onPacketSend} so section-gated destroys can write silently. */
+    private User currentViewer;
     private static PacketEventsEntityViewController SELF; //TODO Switch to LazyConstant once out of preview (see https://openjdk.org/jeps/526)
 
     public static PacketEventsEntityViewController get() {
@@ -107,18 +109,34 @@ public abstract class PacketEventsEntityViewController extends PacketEntityViewC
             hideOnSpawnPlayerDistanceSquared = playerConfig.hideOnSpawnDistance() * playerConfig.hideOnSpawnDistance();
         }
 
+        if (ConfigManager.get().getChunkSectionConfig() != chunkSectionConfig) {
+            chunkSectionConfig = ConfigManager.get().getChunkSectionConfig();
+        }
+
         UUID world = COMMON.resolvePacketWorld(playerData, event.getUser());
         int currentTick = CURRENT_TICK_SUPPLIER.getAsInt();
+        currentViewer = event.getUser();
+        try {
+            handleEntityPackets(event, event.getUser(), playerData, world, currentTick);
 
-        handleEntityPackets(event, event.getUser(), playerData, world, currentTick);
+            if (playerData.entityView().hasPendingTransitions() || playerData.playerView().hasPendingTransitions()) {
+                PlayerData transitionData = playerData;
+                User viewer = event.getUser();
+                event.getTasksAfterSend().add(() -> processPendingEntityTransitions(transitionData, viewer));
+            }
 
-        if (playerData.entityView().hasPendingTransitions() || playerData.playerView().hasPendingTransitions()) {
-            PlayerData transitionData = playerData;
-            User viewer = event.getUser();
-            event.getTasksAfterSend().add(() -> processPendingEntityTransitions(transitionData, viewer));
+            playerData.nettyData().evictPendingPostSpawnTasksIfRequired(currentTick);
+        } finally {
+            currentViewer = null;
         }
-        
-        playerData.nettyData().evictPendingPostSpawnTasksIfRequired(currentTick);
+    }
+
+    @Override
+    protected void forceHideEntityForHiddenSection(PlayerData playerData, NettyEntity<?,?> entity) {
+        entity.setClientVisible(false);
+        if (currentViewer != null && entity.entityID() >= 0) {
+            currentViewer.writePacketSilently(new WrapperPlayServerDestroyEntities(entity.entityID()));
+        }
     }
 
     private void processPendingEntityTransitions(PlayerData data, User viewer) {
@@ -131,6 +149,60 @@ public abstract class PacketEventsEntityViewController extends PacketEntityViewC
         }
 
         viewer.flushPackets();
+    }
+
+    /**
+     * When a chunk section is hidden or revealed, sync tracked entities in that section. Entities are suppressed
+     * even if entity/player LOS checks are disabled, so freecam cannot read mobs through redacted terrain.
+     */
+    public void applyChunkSectionEntityGate(User viewer, PlayerData playerData, int chunkX, int sectionY, int chunkZ, boolean sectionVisible) {
+        if (chunkSectionConfig == null) {
+            chunkSectionConfig = ConfigManager.get().getChunkSectionConfig();
+        }
+        if (entityConfig == null) {
+            entityConfig = ConfigManager.get().getEntityConfig();
+        }
+        if (playerConfig == null) {
+            playerConfig = ConfigManager.get().getPlayerConfig();
+        }
+        if (!isChunkSectionChecksEnabled() || playerData == null || viewer == null) {
+            return;
+        }
+        applyChunkSectionEntityGateToView(viewer, playerData, cast(playerData.entityView()), chunkX, sectionY, chunkZ, sectionVisible, entityConfig.enabled());
+        applyChunkSectionEntityGateToView(viewer, playerData, cast(playerData.playerView()), chunkX, sectionY, chunkZ, sectionVisible, playerConfig.enabled());
+    }
+
+    private void applyChunkSectionEntityGateToView(User viewer, PlayerData playerData, EntityView<PacketEventsEntity> entityView,
+                                                   int chunkX, int sectionY, int chunkZ, boolean sectionVisible, boolean losChecksEnabled) {
+        int[] entityIDs = entityView.getKnownEntityIDs();
+        if (entityIDs == null || entityIDs.length == 0) {
+            return;
+        }
+        for (int entityID : entityIDs) {
+            PacketEventsEntity entity = entityView.getEntity(entityID);
+            if (entity == null || entity.isSelfEntity() || !entityInChunkSection(entity, chunkX, sectionY, chunkZ)) {
+                continue;
+            }
+            if (!sectionVisible) {
+                entity.setVisible(false);
+                if (entity.clientVisible() && entity.entityID() >= 0) {
+                    viewer.writePacketSilently(new WrapperPlayServerDestroyEntities(entity.entityID()));
+                    entity.setClientVisible(false);
+                }
+                continue;
+            }
+            if (losChecksEnabled) {
+                // Engine raycast decides SHOW; force a recheck on the next tick.
+                entity.setLastChecked(Integer.MIN_VALUE);
+                continue;
+            }
+            entity.setVisible(true);
+            if (!entity.clientVisible()) {
+                PacketEventsEntityReplayData replayData = ensureReplayData(entity);
+                sendEntityShow(viewer, playerData, entity, replayData, true);
+                entity.setClientVisible(true);
+            }
+        }
     }
 
     private void handleEntityPackets(PacketSendEvent event, User viewer, PlayerData playerData, UUID world, int currentTick) {

@@ -4,6 +4,7 @@ public class TickTimingBatch {
     long entityNanos;
     long playerNanos;
     long tileNanos;
+    long sectionNanos;
 
     int processedPlayers;
     int bypassSkippedPlayers;
@@ -21,6 +22,11 @@ public class TickTimingBatch {
     int tileRaycasts;
     int tileWorldSkipped;
     int tileRadiusSkipped;
+
+    int sectionChecked;
+    int sectionRaycasts;
+    int sectionWorldSkipped;
+    int sectionRadiusSkipped;
 
     TickTimingBatch() {}
 
@@ -54,6 +60,14 @@ public class TickTimingBatch {
 
     public void finishTileSection(long startNanos) {
         tileNanos += Math.max(0, System.nanoTime() - startNanos);
+    }
+
+    public long startChunkSectionSection() {
+        return System.nanoTime();
+    }
+
+    public void finishChunkSectionSection(long startNanos) {
+        sectionNanos += Math.max(0, System.nanoTime() - startNanos);
     }
 
     public void incrementProcessedPlayers() {
@@ -106,5 +120,21 @@ public class TickTimingBatch {
 
     public void incrementTileRaycasts() {
         tileRaycasts++;
+    }
+
+    public void addSectionChecked(int count) {
+        sectionChecked += count;
+    }
+
+    public void incrementSectionWorldSkipped() {
+        sectionWorldSkipped++;
+    }
+
+    public void incrementSectionRadiusSkipped() {
+        sectionRadiusSkipped++;
+    }
+
+    public void incrementSectionRaycasts() {
+        sectionRaycasts++;
     }
 }

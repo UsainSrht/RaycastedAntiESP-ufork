@@ -10,6 +10,8 @@ public class TickTimingBatchNoOp extends TickTimingBatch {
     public void finishPlayerSection(long startNanos) {}
     public long startTileSection() {return 0;}
     public void finishTileSection(long startNanos) {}
+    public long startChunkSectionSection() {return 0;}
+    public void finishChunkSectionSection(long startNanos) {}
     public void incrementProcessedPlayers() {}
     public void incrementBypassSkippedPlayers() {}
     public void incrementNullLocationSkippedPlayers() {}
@@ -23,4 +25,8 @@ public class TickTimingBatchNoOp extends TickTimingBatch {
     public void incrementTileWorldSkipped() {}
     public void incrementTileRadiusSkipped() {}
     public void incrementTileRaycasts() {}
+    public void addSectionChecked(int count) {}
+    public void incrementSectionWorldSkipped() {}
+    public void incrementSectionRadiusSkipped() {}
+    public void incrementSectionRaycasts() {}
 }

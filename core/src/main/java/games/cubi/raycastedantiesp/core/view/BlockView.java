@@ -2,6 +2,7 @@ package games.cubi.raycastedantiesp.core.view;
 
 import games.cubi.locatables.api.BlockLocatable;
 import games.cubi.locatables.api.BlockSpatial;
+import games.cubi.raycastedantiesp.core.tracked.TrackedChunkSection;
 import games.cubi.raycastedantiesp.core.tracked.TrackedTileEntity;
 import games.cubi.raycastedantiesp.core.chunks.BlockChunkData;
 import games.cubi.raycastedantiesp.core.chunks.OccludingChunkData;
@@ -87,6 +88,52 @@ public interface BlockView extends Clearable {
     boolean hasPendingTransitions();
 
     List<BlockViewTransition> drainTransitions();
+
+    /**
+     * Constructs a new tracked chunk section or returns the existing one. This is a structural-writer operation.
+     *
+     * @return the current tracked section, or null when the location cannot be tracked.
+     */
+    TrackedChunkSection updateOrInsertChunkSection(UUID world, int chunkX, int sectionY, int chunkZ, boolean visibleIfNew);
+
+    TrackedChunkSection getTrackedChunkSection(UUID world, int chunkX, int sectionY, int chunkZ);
+
+    /** Iterates live tracked sections for the currently tracked world. */
+    void forEachTrackedChunkSection(java.util.function.Consumer<TrackedChunkSection> action);
+
+    /** Recomputes VisGraph connectivity for sections dirtied by block mutations. */
+    void refreshDirtySectionVisConnectivity();
+
+    /** Returns true when the section is unknown or currently visible to the client. */
+    boolean isChunkSectionVisible(UUID world, int chunkX, int sectionY, int chunkZ);
+
+    void applyChunkSectionVisibilityDecision(TrackedChunkSection section, boolean visible, int currentTick, long modeToken, int expectedWorldEpoch);
+
+    void recordOutboundChunkSectionVisibility(TrackedChunkSection section, boolean visible);
+
+    void applyChunkSectionCheckMode(boolean enabled, int currentTick);
+
+    long chunkSectionCheckModeToken();
+
+    boolean isCurrentEnabledChunkSectionMode(long modeToken);
+
+    @FunctionalInterface
+    interface ChunkSectionVisibilityResolver {
+        byte SKIPPED = 78;
+        byte HIDE = -23;
+        byte SHOW = 42;
+
+        byte setVisible(TrackedChunkSection section);
+    }
+
+    int updateChunkSectionVisibilityForEachNeedingRecheck(int recheckTicks, int currentTick, long modeToken, int expectedWorldEpoch, ChunkSectionVisibilityResolver action);
+
+    boolean hasPendingSectionTransitions();
+
+    List<ChunkSectionViewTransition> drainSectionTransitions();
+
+    /** Returns stored full block data for a section when track-all-blocks is enabled; otherwise null. */
+    BlockChunkData getBlockChunkData(int chunkX, int sectionY, int chunkZ);
 
     /** Structural-writer operation. */
     void upsertBlock(UUID world, int x, int y, int z, int blockID);

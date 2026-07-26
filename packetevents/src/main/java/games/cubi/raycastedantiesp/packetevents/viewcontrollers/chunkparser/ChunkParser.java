@@ -11,4 +11,11 @@ public interface ChunkParser {
      * Populates the view from the column and returns a replacement only when the outgoing packet was mutated.
      */
     @Nullable Column parse(BlockView blockView, UUID world, Column column, int minimumSectionY);
+
+    /**
+     * Populates the view from the column and optionally redacts occluded sections.
+     *
+     * @param sectionContext non-null when chunk-section checks are enabled for this viewer
+     */
+    @Nullable Column parse(BlockView blockView, UUID world, Column column, int minimumSectionY, @Nullable ChunkSectionParseContext sectionContext);
 }

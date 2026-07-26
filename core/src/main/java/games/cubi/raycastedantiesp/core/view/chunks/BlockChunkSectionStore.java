@@ -51,6 +51,10 @@ public final class BlockChunkSectionStore extends SWMRLong2ObjectHashTable<Block
         put(packChunkCoords(chunkX, sectionY, chunkZ), data);
     }
 
+    public BlockChunkData getSection(int chunkX, int sectionY, int chunkZ) {
+        return get(packChunkCoords(chunkX, sectionY, chunkZ));
+    }
+
     @Override
     public void replaceSectionOcclusion(int chunkX, int sectionY, int chunkZ, games.cubi.raycastedantiesp.core.chunks.OccludingChunkData data) {
         throw new UnsupportedOperationException("Block chunk storage requires full block IDs for section replacement");

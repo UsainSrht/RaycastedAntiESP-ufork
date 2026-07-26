@@ -10,12 +10,15 @@ import games.cubi.raycastedantiesp.core.chunks.BlockChunkData;
 import games.cubi.raycastedantiesp.core.chunks.OccludingChunkData;
 import games.cubi.raycastedantiesp.core.chunks.OccludingChunkDataImpl;
 import games.cubi.raycastedantiesp.core.chunks.blocks.CharArrayBlockChunkData;
+import games.cubi.raycastedantiesp.core.tracked.NettyChunkSection;
 import games.cubi.raycastedantiesp.core.tracked.NettyTileEntity;
+import games.cubi.raycastedantiesp.core.tracked.TrackedChunkSection;
 import games.cubi.raycastedantiesp.core.tracked.TrackedTileEntity;
 import games.cubi.raycastedantiesp.core.utils.Clearable;
 import games.cubi.raycastedantiesp.core.view.AbstractBlockView;
 import games.cubi.raycastedantiesp.core.view.BlockView;
 import games.cubi.raycastedantiesp.core.view.BlockViewTransition;
+import games.cubi.raycastedantiesp.core.view.ChunkSectionViewTransition;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
@@ -419,6 +422,50 @@ class ChunkSectionStoreTest {
 
         assertNull(view.getTrackedTileEntity(first));
         assertNull(view.getTrackedTileEntity(second));
+    }
+
+    @Test
+    void chunkSectionModeGenerationRejectsStaleHideAndForcesRecheck() {
+        TestBlockView view = new TestBlockView(ODD_OCCLUDING, true);
+        UUID world = UUID.randomUUID();
+        view.applyChunkSectionCheckMode(true, 0);
+        view.updateOrInsertChunkSection(world, 0, 0, 0, true);
+        long staleToken = view.chunkSectionCheckModeToken();
+
+        int processed = view.updateChunkSectionVisibilityForEachNeedingRecheck(-1, 1, staleToken, 2, ignored -> {
+            view.applyChunkSectionCheckMode(false, 1);
+            return BlockView.ChunkSectionVisibilityResolver.HIDE;
+        });
+
+        assertEquals(1, processed);
+        assertTrue(view.isChunkSectionVisible(world, 0, 0, 0));
+
+        view.applyChunkSectionCheckMode(true, 2);
+        long enabledToken = view.chunkSectionCheckModeToken();
+        AtomicInteger checks = new AtomicInteger();
+        view.updateChunkSectionVisibilityForEachNeedingRecheck(-1, 2, enabledToken, 2, ignored -> {
+            checks.incrementAndGet();
+            return BlockView.ChunkSectionVisibilityResolver.SHOW;
+        });
+        assertEquals(1, checks.get());
+    }
+
+    @Test
+    void chunkSectionTransitionRetainsIdentityAfterRemoval() {
+        TestBlockView view = new TestBlockView(ODD_OCCLUDING, true);
+        UUID world = UUID.randomUUID();
+        view.applyChunkSectionCheckMode(true, 0);
+        TrackedChunkSection original = view.updateOrInsertChunkSection(world, 1, 2, 3, true);
+        view.applyChunkSectionVisibilityDecision(original, false, 1, view.chunkSectionCheckModeToken(), 2);
+        ChunkSectionViewTransition transition = view.drainSectionTransitions().getFirst();
+
+        view.removeChunkSection(world, 1, 2, 3);
+        TrackedChunkSection replacement = view.updateOrInsertChunkSection(world, 1, 2, 3, true);
+
+        assertSame(original, transition.section());
+        assertTrue(((NettyChunkSection) original).isRemoved());
+        assertTrue(replacement.visible());
+        assertFalse(((NettyChunkSection) replacement).isRemoved());
     }
 
     private static OccludingChunkData occlusionOf(char[] section) {

@@ -8,11 +8,15 @@ import com.github.retrooper.packetevents.protocol.world.chunk.BaseChunk;
 import com.github.retrooper.packetevents.protocol.world.chunk.Column;
 import com.github.retrooper.packetevents.protocol.world.chunk.TileEntity;
 import com.github.retrooper.packetevents.protocol.world.chunk.impl.v_1_18.Chunk_v1_18;
+import com.github.retrooper.packetevents.protocol.world.chunk.palette.DataPalette;
 import com.github.retrooper.packetevents.protocol.world.chunk.palette.GlobalPalette;
+import com.github.retrooper.packetevents.protocol.world.chunk.palette.PaletteType;
+import com.github.retrooper.packetevents.protocol.world.chunk.palette.SingletonPalette;
 import games.cubi.locatables.implementations.MutableBlockSpatialImpl;
 import games.cubi.logs.Logger;
 import games.cubi.raycastedantiesp.core.chunks.BlockInfoResolver;
 import games.cubi.raycastedantiesp.core.chunks.ChunkData;
+import games.cubi.raycastedantiesp.core.tracked.TrackedChunkSection;
 import games.cubi.raycastedantiesp.core.tracked.TrackedTileEntity;
 import games.cubi.raycastedantiesp.core.view.BlockView;
 import games.cubi.raycastedantiesp.packetevents.replaydata.PacketEventsTileEntityReplayData;
@@ -46,8 +50,14 @@ abstract class AbstractChunkParser<D> implements ChunkParser {
 
     @Override
     public final @Nullable Column parse(BlockView blockView, UUID world, Column column, int minimumSectionY) {
+        return parse(blockView, world, column, minimumSectionY, null);
+    }
+
+    @Override
+    public final @Nullable Column parse(BlockView blockView, UUID world, Column column, int minimumSectionY, @Nullable ChunkSectionParseContext sectionContext) {
         BaseChunk[] sections = column.getChunks();
         long[][] managedBySection = null;
+        boolean[] sectionHiddenOnWire = sectionContext == null ? null : new boolean[sections.length];
         MutableBlockSpatialImpl key = null;
         int chunkX = column.getX();
         int chunkZ = column.getZ();
@@ -55,6 +65,7 @@ abstract class AbstractChunkParser<D> implements ChunkParser {
         int blockOriginX = chunkX << 4;
         int blockOriginZ = chunkZ << 4;
         boolean mutatedBlock = false;
+        boolean mutatedSection = false;
 
         for (int sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
             Chunk_v1_18 section = (Chunk_v1_18) sections[sectionIndex];
@@ -66,6 +77,18 @@ abstract class AbstractChunkParser<D> implements ChunkParser {
                 storeSection(blockView, world, chunkX, sectionY, chunkZ, data);
             }
 
+            boolean hideSectionOnWire = false;
+            if (sectionContext != null && data != null) {
+                boolean visibleIfNew = sectionContext.isWithinAlwaysShow(world, chunkX, sectionY, chunkZ);
+                TrackedChunkSection trackedSection = blockView.updateOrInsertChunkSection(world, chunkX, sectionY, chunkZ, visibleIfNew);
+                if (trackedSection != null && !trackedSection.visible()) {
+                    hideSectionOnWire = true;
+                    sectionHiddenOnWire[sectionIndex] = true;
+                    sections[sectionIndex] = emptySectionKeepingBiomes(section);
+                    mutatedSection = true;
+                }
+            }
+
             if (!sectionMayContainManagedTiles(section)) {
                 continue;
             }
@@ -73,6 +96,7 @@ abstract class AbstractChunkParser<D> implements ChunkParser {
             for (int localY = 0; localY < ChunkData.CHUNK_SIZE; localY++) {
                 for (int localZ = 0; localZ < ChunkData.CHUNK_SIZE; localZ++) {
                     for (int localX = 0; localX < ChunkData.CHUNK_SIZE; localX++) {
+                        // Read from the original section before any empty-wire replacement.
                         char blockID = (char) section.getBlockId(localX, localY, localZ);
                         if (!blockInfoResolver.isTileEntity(blockID)) {
                             continue;
@@ -94,12 +118,17 @@ abstract class AbstractChunkParser<D> implements ChunkParser {
                             key = new MutableBlockSpatialImpl(0, 0, 0);
                         }
                         key.setBlockPosition(blockX, blockY, blockZ);
-                        TrackedTileEntity<?> state = blockView.updateOrInsertTileEntity(world, key, blockID, !mutatePackets);
-                        if (!mutatePackets) {
+                        boolean visibleIfNew = !mutatePackets && !hideSectionOnWire;
+                        TrackedTileEntity<?> state = blockView.updateOrInsertTileEntity(world, key, blockID, visibleIfNew);
+                        if (!mutatePackets && !hideSectionOnWire) {
                             blockView.recordOutboundTileEntityVisibility(state, true);
                         } else if (state != null && !state.visible()) {
-                            section.set(localX, localY, localZ, hiddenBlockID.applyAsInt(blockY));
-                            mutatedBlock = true;
+                            if (!hideSectionOnWire) {
+                                // Wire section is still the live Chunk_v1_18 reference when not replaced.
+                                Chunk_v1_18 wireSection = (Chunk_v1_18) sections[sectionIndex];
+                                wireSection.set(localX, localY, localZ, hiddenBlockID.applyAsInt(blockY));
+                                mutatedBlock = true;
+                            }
                         }
                     }
                 }
@@ -117,8 +146,8 @@ abstract class AbstractChunkParser<D> implements ChunkParser {
         }
         for (int index = 0; index < sourceTileEntities.length; index++) {
             TileEntity tileEntity = sourceTileEntities[index];
-            boolean strip = processTileEntity(blockView, world, blockOriginX, blockOriginZ, sections, minimumSectionY, managedBySection, tileEntity, key);
-            if (mutatePackets && strip) {
+            boolean strip = processTileEntity(blockView, world, blockOriginX, blockOriginZ, sections, minimumSectionY, managedBySection, sectionHiddenOnWire, tileEntity, key);
+            if ((mutatePackets || mutatedSection) && strip) {
                 if (!stripped) {
                     stripped = true;
                     if (index > 0) {
@@ -141,7 +170,13 @@ abstract class AbstractChunkParser<D> implements ChunkParser {
                     : retainedCount == retained.length ? retained : Arrays.copyOf(retained, retainedCount);
         }
 
-        return mutatePackets && (mutatedBlock || stripped) ? copyColumn(column, filtered) : null;
+        return mutatedSection || (mutatePackets && (mutatedBlock || stripped)) ? copyColumn(column, filtered) : null;
+    }
+
+    @SuppressWarnings("deprecation")
+    private Chunk_v1_18 emptySectionKeepingBiomes(Chunk_v1_18 original) {
+        DataPalette airBlocks = new DataPalette(new SingletonPalette(0), null, PaletteType.CHUNK);
+        return new Chunk_v1_18(0, 0, airBlocks, original.getBiomeData());
     }
 
     private boolean sectionMayContainManagedTiles(Chunk_v1_18 section) {
@@ -158,7 +193,7 @@ abstract class AbstractChunkParser<D> implements ChunkParser {
     }
 
     private boolean processTileEntity(BlockView blockView, UUID world, int blockOriginX, int blockOriginZ, BaseChunk[] sections, int minimumSectionY,
-                                      long[][] managedBySection, TileEntity tileEntity, MutableBlockSpatialImpl key) {
+                                      long[][] managedBySection, boolean[] sectionHiddenOnWire, TileEntity tileEntity, MutableBlockSpatialImpl key) {
         int packedXZ = Byte.toUnsignedInt(tileEntity.getPackedByte());
         // Modern block entities store local x in the high nibble and local z in the low nibble.
         int localX = packedXZ >>> 4;
@@ -169,6 +204,13 @@ abstract class AbstractChunkParser<D> implements ChunkParser {
         // Arithmetic shifting divides by 16 with the required floor behavior for negative block Y coordinates.
         int sectionIndex = (blockY >> 4) - minimumSectionY;
         key.setBlockPosition(blockX, blockY, blockZ);
+        if (sectionIndex >= 0 && sectionIndex < sections.length && sectionHiddenOnWire != null && sectionHiddenOnWire[sectionIndex]) {
+            TrackedTileEntity<PacketEventsTileEntityReplayData> state = tracked(blockView, world, key);
+            if (state != null) {
+                replayData(state).setBlockEntityData(BlockEntityTypes.getById(clientVersion, tileEntity.getType()), tileEntity.getNBT());
+            }
+            return true;
+        }
         if (sectionIndex >= 0 && sectionIndex < sections.length) {
             long[] managed = managedBySection == null ? null : managedBySection[sectionIndex];
             int packed = ChunkData.packUncheckedGuarded(localX, blockY, localZ);

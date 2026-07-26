@@ -12,6 +12,7 @@ final class TickTimings {
     private long entityNanos;
     private long playerNanos;
     private long tileNanos;
+    private long sectionNanos;
 
     private int processedPlayers;
     private int bypassSkippedPlayers;
@@ -30,6 +31,11 @@ final class TickTimings {
     private int tileWorldSkipped;
     private int tileRadiusSkipped;
 
+    private int sectionChecked;
+    private int sectionRaycasts;
+    private int sectionWorldSkipped;
+    private int sectionRadiusSkipped;
+
     TickTimings(int scheduledTick, long scheduledNanos, int startTick, long startNanos, int threads, int registeredPlayers) {
         this.scheduledTick = scheduledTick;
         this.scheduledNanos = scheduledNanos;
@@ -45,6 +51,7 @@ final class TickTimings {
         entityNanos += batch.entityNanos;
         playerNanos += batch.playerNanos;
         tileNanos += batch.tileNanos;
+        sectionNanos += batch.sectionNanos;
 
         processedPlayers += batch.processedPlayers;
         bypassSkippedPlayers += batch.bypassSkippedPlayers;
@@ -62,6 +69,11 @@ final class TickTimings {
         tileRaycasts += batch.tileRaycasts;
         tileWorldSkipped += batch.tileWorldSkipped;
         tileRadiusSkipped += batch.tileRadiusSkipped;
+
+        sectionChecked += batch.sectionChecked;
+        sectionRaycasts += batch.sectionRaycasts;
+        sectionWorldSkipped += batch.sectionWorldSkipped;
+        sectionRadiusSkipped += batch.sectionRadiusSkipped;
     }
 
     synchronized TickTimingSnapshot snapshot(int completionTick, long completionNanos) {
@@ -77,6 +89,7 @@ final class TickTimings {
                 entityNanos,
                 playerNanos,
                 tileNanos,
+                sectionNanos,
                 processedPlayers,
                 bypassSkippedPlayers,
                 nullLocationSkippedPlayers,
@@ -89,7 +102,11 @@ final class TickTimings {
                 tileChecked,
                 tileRaycasts,
                 tileWorldSkipped,
-                tileRadiusSkipped
+                tileRadiusSkipped,
+                sectionChecked,
+                sectionRaycasts,
+                sectionWorldSkipped,
+                sectionRadiusSkipped
         );
     }
 }

@@ -2,24 +2,32 @@ package games.cubi.raycastedantiesp.core.engine;
 
 import games.cubi.locatables.api.ImmutableSpatial;
 import games.cubi.locatables.api.Locatable;
+import games.cubi.locatables.implementations.ImmutableSpatialImpl;
 import games.cubi.logs.Logger;
 import games.cubi.raycastedantiesp.core.config.ConfigManager;
 import games.cubi.raycastedantiesp.core.config.DebugConfig;
+import games.cubi.raycastedantiesp.core.config.raycast.ChunkSectionConfig;
 import games.cubi.raycastedantiesp.core.config.raycast.EntityConfig;
 import games.cubi.raycastedantiesp.core.config.raycast.PlayerConfig;
 import games.cubi.raycastedantiesp.core.config.raycast.TileEntityConfig;
 import games.cubi.raycastedantiesp.core.tracked.NettyEntity;
+import games.cubi.raycastedantiesp.core.tracked.TrackedChunkSection;
 import games.cubi.raycastedantiesp.core.players.PlayerData;
 import games.cubi.raycastedantiesp.core.players.PlayerRegistry;
+import games.cubi.raycastedantiesp.core.raycast.ChunkSectionVisibilityUtil;
 import games.cubi.raycastedantiesp.core.raycast.ParticleSpawner;
 import games.cubi.raycastedantiesp.core.raycast.RaycastUtil;
+import games.cubi.raycastedantiesp.core.raycast.SectionVisGraph;
 import games.cubi.raycastedantiesp.core.utils.PrimitiveIntArrayList;
 import games.cubi.raycastedantiesp.core.view.BlockView;
 import games.cubi.raycastedantiesp.core.view.EntityView;
+import games.cubi.raycastedantiesp.core.view.chunks.ChunkSectionStore;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.IntSupplier;
@@ -168,6 +176,7 @@ public abstract class AsyncEngine implements Engine {
             EntityConfig entityConfig = config.getEntityConfig();
             PlayerConfig playerConfig = config.getPlayerConfig();
             TileEntityConfig tileEntityConfig = config.getTileEntityConfig();
+            ChunkSectionConfig chunkSectionConfig = config.getChunkSectionConfig();
             if (recordTimings) {
                 timings = new TickTimings(scheduledTick, scheduledNanos, currentTick, startNanos, threads, allPlayers.size());
             }
@@ -185,7 +194,7 @@ public abstract class AsyncEngine implements Engine {
             // If only one thread is configured, just use the current async thread to avoid the overhead of scheduling tasks and context switching.
             if (threads == 1) {
                 handedOffToSubTick = true;
-                subTick(new ArrayList<>(allPlayers), entityConfig, playerConfig, tileEntityConfig, debugConfig, currentTick, timings, tickTimingStats);
+                subTick(new ArrayList<>(allPlayers), entityConfig, playerConfig, tileEntityConfig, chunkSectionConfig, debugConfig, currentTick, timings, tickTimingStats);
                 return true;
             }
 
@@ -203,7 +212,7 @@ public abstract class AsyncEngine implements Engine {
             int scheduledBatches = 0;
             try {
                 for (List<PlayerData> batch : batches) {
-                    asyncRunner.runNow(() -> subTick(batch, entityConfig, playerConfig, tileEntityConfig, debugConfig, currentTick, tickTimings, tickTimingStats));
+                    asyncRunner.runNow(() -> subTick(batch, entityConfig, playerConfig, tileEntityConfig, chunkSectionConfig, debugConfig, currentTick, tickTimings, tickTimingStats));
                     scheduledBatches++;
                 }
                 handedOffToSubTick = true;
@@ -235,11 +244,11 @@ public abstract class AsyncEngine implements Engine {
      * @param timingStats the timing sink selected when this tick started, so config changes during
      * worker execution do not split one tick across sinks.
      */
-    private void subTick(List<PlayerData> batch, EntityConfig entityConfig, PlayerConfig playerConfig, TileEntityConfig tileEntityConfig, DebugConfig debugConfig, int currentTick, TickTimings timings, TimingStats timingStats) {
+    private void subTick(List<PlayerData> batch, EntityConfig entityConfig, PlayerConfig playerConfig, TileEntityConfig tileEntityConfig, ChunkSectionConfig chunkSectionConfig, DebugConfig debugConfig, int currentTick, TickTimings timings, TimingStats timingStats) {
         TickTimingBatch batchTimings = timings == null ? TickTimingBatchNoOp.INSTANCE : new TickTimingBatch();
         long batchStartNanos = batchTimings.startBatch();
         try {
-            processTickForPlayers(batch, entityConfig, playerConfig, tileEntityConfig, debugConfig.showDebugParticles(), currentTick, batchTimings);
+            processTickForPlayers(batch, entityConfig, playerConfig, tileEntityConfig, chunkSectionConfig, debugConfig.showDebugParticles(), currentTick, batchTimings);
         }
         finally {
             if (timings != null) {
@@ -321,7 +330,7 @@ public abstract class AsyncEngine implements Engine {
     }
 
     private void processTickForPlayers(List<PlayerData> playerDataList, EntityConfig entityConfig, PlayerConfig playerConfig, TileEntityConfig tileEntityConfig,
-                                       boolean debugParticles, int currentTick, TickTimingBatch timings) {
+                                       ChunkSectionConfig chunkSectionConfig, boolean debugParticles, int currentTick, TickTimingBatch timings) {
 
         for (PlayerData playerData : playerDataList) {
             if (!playerData.isConnected()) {
@@ -343,6 +352,7 @@ public abstract class AsyncEngine implements Engine {
             int worldEpoch = playerData.tryAcquireWorldEpochFor(playerLocation.world());
             if (worldEpoch == PlayerData.INVALID_WORLD_EPOCH) {
                 if (tileEntityConfig.enabled()) timings.incrementTileWorldSkipped();
+                if (chunkSectionConfig.enabled()) timings.incrementSectionWorldSkipped();
                 continue;
             }
             timings.incrementProcessedPlayers();
@@ -361,6 +371,11 @@ public abstract class AsyncEngine implements Engine {
                 long sectionStartNanos = timings.startTileSection();
                 checkTileEntities(playerData, playerLocation, tileEntityConfig, debugParticles, blockView, currentTick, worldEpoch, timings);
                 timings.finishTileSection(sectionStartNanos);
+            }
+            if (chunkSectionConfig.enabled()) {
+                long sectionStartNanos = timings.startChunkSectionSection();
+                checkChunkSections(playerData, playerLocation, chunkSectionConfig, debugParticles, blockView, currentTick, worldEpoch, timings);
+                timings.finishChunkSectionSection(sectionStartNanos);
             }
         }
     }
@@ -437,6 +452,210 @@ public abstract class AsyncEngine implements Engine {
             return canSee ? BlockView.VisibilityResolver.SHOW : BlockView.VisibilityResolver.HIDE;
         });
         timings.addTileChecked(checked);
+    }
+
+    private void checkChunkSections(PlayerData player, Locatable playerLocation, ChunkSectionConfig chunkSectionConfig, boolean debugParticles, BlockView blockView, int currentTick, int worldEpoch, TickTimingBatch timings) {
+        long modeToken = blockView.chunkSectionCheckModeToken();
+        if (!blockView.isCurrentEnabledChunkSectionMode(modeToken)) {
+            return;
+        }
+        UUID world = playerLocation.world();
+        int viewerChunkX = playerLocation.blockX() >> 4;
+        int viewerSectionY = playerLocation.blockY() >> 4;
+        int viewerChunkZ = playerLocation.blockZ() >> 4;
+        int alwaysShowRadius = chunkSectionConfig.alwaysShowRadiusChunks();
+        int alwaysShowVertical = chunkSectionConfig.alwaysShowVerticalSections();
+        int raycastRadius = chunkSectionConfig.raycastRadiusChunks();
+        int raycastRadiusBlocks = raycastRadius * 16;
+        int hideDelayTicks = chunkSectionConfig.hideDelayTicks();
+        boolean neighborPadding = chunkSectionConfig.neighborPadding();
+        int recheckTicks = chunkSectionConfig.visibleRecheckIntervalTicks();
+
+        blockView.refreshDirtySectionVisConnectivity();
+
+        LongOpenHashSet reachable = new LongOpenHashSet();
+        SectionVisGraph.collectReachable(
+                viewerChunkX,
+                viewerSectionY,
+                viewerChunkZ,
+                raycastRadius,
+                key -> {
+                    TrackedChunkSection tracked = blockView.getTrackedChunkSection(
+                            world,
+                            ChunkSectionStore.unpackChunkX(key),
+                            ChunkSectionStore.unpackSectionY(key),
+                            ChunkSectionStore.unpackChunkZ(key)
+                    );
+                    return tracked == null ? SectionVisGraph.SOLID : tracked.visConnectivity();
+                },
+                reachable
+        );
+
+        LongOpenHashSet wantShow = new LongOpenHashSet();
+        LongOpenHashSet evaluatedThisTick = new LongOpenHashSet();
+        int[] checked = {0};
+        blockView.forEachTrackedChunkSection(section -> {
+            checked[0]++;
+            int chebyshev = ChunkSectionVisibilityUtil.chebyshevSectionDistance(
+                    viewerChunkX, viewerSectionY, viewerChunkZ,
+                    section.chunkX(), section.sectionY(), section.chunkZ()
+            );
+            if (chebyshev > raycastRadius) {
+                timings.incrementSectionRadiusSkipped();
+                return;
+            }
+            long key = ChunkSectionStore.packChunkCoords(section.chunkX(), section.sectionY(), section.chunkZ());
+            if (ChunkSectionVisibilityUtil.isWithinAlwaysShow(
+                    viewerChunkX, viewerSectionY, viewerChunkZ,
+                    section.chunkX(), section.sectionY(), section.chunkZ(),
+                    alwaysShowRadius, alwaysShowVertical)
+                    || ChunkSectionVisibilityUtil.isEyeInsideSection(playerLocation, section)) {
+                wantShow.add(key);
+                evaluatedThisTick.add(key);
+                return;
+            }
+
+            // Sticky SHOW: avoid re-raycasting every tick (major server cost / client thrash source).
+            int lastChecked = section.lastChecked();
+            if (section.visible()
+                    && lastChecked != TrackedChunkSection.NEVER_CHECKED
+                    && recheckTicks > 0
+                    && currentTick - lastChecked < recheckTicks) {
+                wantShow.add(key);
+                return;
+            }
+
+            long connectivity = section.visConnectivity();
+            // Pure air / non-occluding-only sections look identical when culled — never spend rays on them.
+            if (connectivity == SectionVisGraph.FULLY_OPEN) {
+                evaluatedThisTick.add(key);
+                return;
+            }
+            boolean reachableFromEye = reachable.contains(key);
+            // VisGraph HIDE filter applies only to unreachable air volumes (open faces, not solid shells).
+            // Solid terrain is never air-reachable and must still be face-sampled or surfaces vanish.
+            if (!reachableFromEye && SectionVisGraph.hasAnyOpenFace(connectivity)) {
+                evaluatedThisTick.add(key);
+                return;
+            }
+
+            evaluatedThisTick.add(key);
+            timings.incrementSectionRaycasts();
+            if (canSeeSectionByFacingFaces(
+                    playerLocation,
+                    section,
+                    chunkSectionConfig.maxOccludingCount(),
+                    raycastRadiusBlocks,
+                    debugParticles,
+                    blockView
+            )) {
+                wantShow.add(key);
+            }
+        });
+
+        LongOpenHashSet clientShow = wantShow;
+        if (neighborPadding && !wantShow.isEmpty()) {
+            clientShow = new LongOpenHashSet(wantShow);
+            // Only keep already-visible neighbors — do not force-SHOW new shells (packet/client storm).
+            for (long key : wantShow) {
+                int cx = ChunkSectionStore.unpackChunkX(key);
+                int sy = ChunkSectionStore.unpackSectionY(key);
+                int cz = ChunkSectionStore.unpackChunkZ(key);
+                for (int dx = -1; dx <= 1; dx++) {
+                    for (int dy = -1; dy <= 1; dy++) {
+                        for (int dz = -1; dz <= 1; dz++) {
+                            if (dx == 0 && dy == 0 && dz == 0) {
+                                continue;
+                            }
+                            TrackedChunkSection neighbor = blockView.getTrackedChunkSection(world, cx + dx, sy + dy, cz + dz);
+                            if (neighbor != null && neighbor.visible()) {
+                                clientShow.add(ChunkSectionStore.packChunkCoords(cx + dx, sy + dy, cz + dz));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        LongOpenHashSet finalClientShow = clientShow;
+        blockView.forEachTrackedChunkSection(section -> {
+            long key = ChunkSectionStore.packChunkCoords(section.chunkX(), section.sectionY(), section.chunkZ());
+            boolean shouldShow = finalClientShow.contains(key);
+            if (shouldShow) {
+                section.setWantHiddenSinceTick(TrackedChunkSection.NOT_WANTING_HIDE);
+                if (!section.visible()) {
+                    blockView.applyChunkSectionVisibilityDecision(section, true, currentTick, modeToken, worldEpoch);
+                } else if (evaluatedThisTick.contains(key)) {
+                    // Advance recheck clock only after a real evaluation, not sticky reuse.
+                    section.setLastChecked(currentTick);
+                }
+                return;
+            }
+            if (section.wantHiddenSinceTick() == TrackedChunkSection.NOT_WANTING_HIDE) {
+                section.setWantHiddenSinceTick(currentTick);
+            }
+            if (section.visible()
+                    && ChunkSectionVisibilityUtil.hideDelayElapsed(section.wantHiddenSinceTick(), currentTick, hideDelayTicks)) {
+                blockView.applyChunkSectionVisibilityDecision(section, false, currentTick, modeToken, worldEpoch);
+            }
+        });
+        timings.addSectionChecked(checked[0]);
+    }
+
+    private boolean canSeeSectionByFacingFaces(
+            Locatable eye,
+            TrackedChunkSection section,
+            int maxOccludingCount,
+            int maxRaycastRadiusBlocks,
+            boolean debugParticles,
+            BlockView blockView
+    ) {
+        if (ChunkSectionVisibilityUtil.isEyeInsideSection(eye, section)) {
+            return true;
+        }
+        // Centers first (cheap); corners only if needed to reduce surface false-hides.
+        List<ImmutableSpatialImpl> samples = ChunkSectionVisibilityUtil.sampleFaceCentersForFacingFaces(
+                eye.x(), eye.y(), eye.z(),
+                section.chunkX(), section.sectionY(), section.chunkZ()
+        );
+        if (anySectionEntryRay(eye, section, samples, maxOccludingCount, maxRaycastRadiusBlocks, debugParticles, blockView)) {
+            return true;
+        }
+        samples = ChunkSectionVisibilityUtil.samplePointsForFacingFaces(
+                eye.x(), eye.y(), eye.z(),
+                section.chunkX(), section.sectionY(), section.chunkZ()
+        );
+        return anySectionEntryRay(eye, section, samples, maxOccludingCount, maxRaycastRadiusBlocks, debugParticles, blockView);
+    }
+
+    private boolean anySectionEntryRay(
+            Locatable eye,
+            TrackedChunkSection section,
+            List<ImmutableSpatialImpl> samples,
+            int maxOccludingCount,
+            int maxRaycastRadiusBlocks,
+            boolean debugParticles,
+            BlockView blockView
+    ) {
+        for (ImmutableSpatialImpl sample : samples) {
+            if (RaycastUtil.raycastUntilSectionEntry(
+                    eye,
+                    sample,
+                    section.chunkX(),
+                    section.sectionY(),
+                    section.chunkZ(),
+                    maxOccludingCount,
+                    0,
+                    maxRaycastRadiusBlocks,
+                    debugParticles,
+                    blockView,
+                    1,
+                    particleSpawner
+            )) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void logAggregateReport(String aggregateReport) {

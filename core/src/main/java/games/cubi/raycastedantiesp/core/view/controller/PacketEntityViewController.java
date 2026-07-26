@@ -10,6 +10,7 @@ package games.cubi.raycastedantiesp.core.view.controller;
 
 import games.cubi.locatables.api.Locatable;
 import games.cubi.logs.Logger;
+import games.cubi.raycastedantiesp.core.config.raycast.ChunkSectionConfig;
 import games.cubi.raycastedantiesp.core.config.raycast.EntityConfig;
 import games.cubi.raycastedantiesp.core.config.raycast.PlayerConfig;
 import games.cubi.raycastedantiesp.core.config.raycast.RaycastConfig;
@@ -49,6 +50,7 @@ public abstract class PacketEntityViewController<P> {
 
     protected EntityConfig entityConfig = null;
     protected PlayerConfig playerConfig = null;
+    protected ChunkSectionConfig chunkSectionConfig = null;
     protected double hideOnSpawnEntityDistanceSquared = 0;
     protected double hideOnSpawnPlayerDistanceSquared = 0;
 
@@ -118,6 +120,18 @@ public abstract class PacketEntityViewController<P> {
         }
 
         NettyEntity<?,?> entity = Logger.requireNonNull(processEntitySpawn(playerData, packet, world, currentTick), "processEntitySpawn returned null", 3, PacketEntityViewController.class);
+
+        // Hidden chunk sections must not reveal entities even when entity/player LOS checks are disabled.
+        if (isInHiddenChunkSection(playerData, entity, world)) {
+            entity.setVisible(false);
+            entity.setClientVisible(false);
+            if (isPlayer) {
+                insertEntityToPlayerView(entity, playerData, world);
+            } else {
+                insertEntityToEntityView(entity, playerData, world);
+            }
+            return true;
+        }
 
         if ((!isPlayer && entityConfig.enabled()) || isPlayer && playerConfig.enabled()) {
             Locatable ownLocation = playerData.ownLocation();
@@ -541,6 +555,12 @@ public abstract class PacketEntityViewController<P> {
             return false;
         }
 
+        NettyEntity<?,?> entity = playerData.entityFromID(entityID);
+        UUID world = viewerWorld(playerData);
+        if (entity != null && suppressForHiddenChunkSection(playerData, entity, world)) {
+            return true;
+        }
+
         if (entityView.isVisible(entityID)) {
             return false;
         }
@@ -555,11 +575,63 @@ public abstract class PacketEntityViewController<P> {
         if (entity.isSelfEntity()) {
             return false;
         }
+        if (suppressForHiddenChunkSection(playerData, entity, viewerWorld(playerData))) {
+            return true;
+        }
         if (entity.visible()) {
             return false;
         }
 
         return getCorrectConfig(playerData.viewFromEntityID(entity.entityID())).enabled(); // If this statement is reached, the entity should be hidden, so if the config is enabled it is hidden.
+    }
+
+    private boolean suppressForHiddenChunkSection(PlayerData playerData, NettyEntity<?,?> entity, UUID world) {
+        if (!isInHiddenChunkSection(playerData, entity, world)) {
+            return false;
+        }
+        entity.setVisible(false);
+        if (entity.clientVisible()) {
+            forceHideEntityForHiddenSection(playerData, entity);
+        }
+        return true;
+    }
+
+    /**
+     * Platform hook: destroy a client-visible entity that entered a redacted chunk section.
+     * Default is a no-op; PacketEvents clears the client entity immediately.
+     */
+    protected void forceHideEntityForHiddenSection(PlayerData playerData, NettyEntity<?,?> entity) {
+        entity.setClientVisible(false);
+    }
+
+    protected boolean isChunkSectionChecksEnabled() {
+        return chunkSectionConfig != null && chunkSectionConfig.enabled();
+    }
+
+    /** Returns true when chunk-section checks are enabled and the entity's current section is client-hidden. */
+    protected boolean isInHiddenChunkSection(PlayerData playerData, NettyEntity<?,?> entity, UUID world) {
+        if (!isChunkSectionChecksEnabled() || playerData == null || entity == null || entity.isSelfEntity() || world == null) {
+            return false;
+        }
+        int chunkX = floorDiv16(entity.x());
+        int sectionY = floorDiv16(entity.y());
+        int chunkZ = floorDiv16(entity.z());
+        return !playerData.blockView().isChunkSectionVisible(world, chunkX, sectionY, chunkZ);
+    }
+
+    protected static UUID viewerWorld(PlayerData playerData) {
+        Locatable ownLocation = playerData.ownLocation();
+        return ownLocation == null ? null : ownLocation.world();
+    }
+
+    protected static int floorDiv16(double value) {
+        return ((int) Math.floor(value)) >> 4;
+    }
+
+    protected static boolean entityInChunkSection(NettyEntity<?,?> entity, int chunkX, int sectionY, int chunkZ) {
+        return floorDiv16(entity.x()) == chunkX
+                && floorDiv16(entity.y()) == sectionY
+                && floorDiv16(entity.z()) == chunkZ;
     }
 
     /**

@@ -2,12 +2,17 @@ package games.cubi.raycastedantiesp.core.view;
 
 import ca.spottedleaf.concurrentutil.collection.MultiThreadedQueue;
 import ca.spottedleaf.concurrentutil.map.SWMRInt2ObjectHashTable;
+import ca.spottedleaf.concurrentutil.map.SWMRLong2ObjectHashTable;
 import games.cubi.locatables.api.BlockLocatable;
 import games.cubi.locatables.api.BlockSpatial;
 import games.cubi.logs.Logger;
 import games.cubi.raycastedantiesp.core.chunks.BlockInfoResolver;
 import games.cubi.raycastedantiesp.core.chunks.BlockChunkData;
+import games.cubi.raycastedantiesp.core.chunks.ChunkOcclusionView;
 import games.cubi.raycastedantiesp.core.chunks.OccludingChunkData;
+import games.cubi.raycastedantiesp.core.raycast.SectionVisGraph;
+import games.cubi.raycastedantiesp.core.tracked.NettyChunkSection;
+import games.cubi.raycastedantiesp.core.tracked.TrackedChunkSection;
 import games.cubi.raycastedantiesp.core.tracked.TrackedTileEntity;
 import games.cubi.raycastedantiesp.core.tracked.NettyTileEntity;
 import games.cubi.raycastedantiesp.core.players.PlayerData;
@@ -27,6 +32,7 @@ import java.util.function.Consumer;
 import java.util.function.IntSupplier;
 
 import static games.cubi.raycastedantiesp.core.chunks.ChunkData.packUncheckedGuarded;
+import static games.cubi.raycastedantiesp.core.view.chunks.ChunkSectionStore.packChunkCoords;
 
 public abstract class AbstractBlockView<R extends Clearable, T extends NettyTileEntity<R>> implements BlockView {
     public static final int CHUNK_SIZE = 16;
@@ -40,12 +46,15 @@ public abstract class AbstractBlockView<R extends Clearable, T extends NettyTile
      * <p> Since direct access to this object outside {@link AbstractBlockView} is impossible, a marker head object is skipped, and head removal is handled separately.
      * **/
     private final SWMRInt2ObjectHashTable<NettyTileEntity<R>> knownTileEntitiesByColumnBucket = new SWMRInt2ObjectHashTable<>();
+    private final SWMRLong2ObjectHashTable<NettyChunkSection> knownChunkSections = new SWMRLong2ObjectHashTable<>();
     private final MultiThreadedQueue<BlockViewTransition> transitions = new MultiThreadedQueue<>();
+    private final MultiThreadedQueue<ChunkSectionViewTransition> sectionTransitions = new MultiThreadedQueue<>();
     private final IntSupplier worldEpochSupplier;
     private volatile UUID trackedWorld;
     // Bit 0 is enabled; higher bits are a generation. The generation prevents enabled -> disabled -> enabled ABA from
     // accepting an old raycast and also tags transitions that may be drained after their originating mode was replaced.
     private volatile long tileEntityCheckModeToken; private static final VarHandle TILE_ENTITY_CHECK_MODE_TOKEN = VarHandler.get(AbstractBlockView.class, "tileEntityCheckModeToken", long.class);
+    private volatile long chunkSectionCheckModeToken; private static final VarHandle CHUNK_SECTION_CHECK_MODE_TOKEN = VarHandler.get(AbstractBlockView.class, "chunkSectionCheckModeToken", long.class);
 
     protected AbstractBlockView(BlockInfoResolver blockInfoResolver, boolean trackAllBlocks, IntSupplier worldEpochSupplier) {
         Logger.requireNonNull(blockInfoResolver, "blockInfoResolver was null", 1, AbstractBlockView.class);
@@ -271,11 +280,185 @@ public abstract class AbstractBlockView<R extends Clearable, T extends NettyTile
     }
 
     @Override
+    public NettyChunkSection updateOrInsertChunkSection(UUID world, int chunkX, int sectionY, int chunkZ, boolean visibleIfNew) {
+        if (!ensureTrackedWorld(world)) {
+            return null;
+        }
+        long key = packChunkCoords(chunkX, sectionY, chunkZ);
+        NettyChunkSection existing = knownChunkSections.get(key);
+        if (existing != null && !existing.isRemoved()) {
+            return existing;
+        }
+        NettyChunkSection created = new NettyChunkSection(chunkX, sectionY, chunkZ, visibleIfNew);
+        knownChunkSections.put(key, created);
+        refreshVisConnectivity(created);
+        return created;
+    }
+
+    @Override
+    public NettyChunkSection getTrackedChunkSection(UUID world, int chunkX, int sectionY, int chunkZ) {
+        if (!isTrackedWorld(world)) {
+            return null;
+        }
+        NettyChunkSection section = knownChunkSections.get(packChunkCoords(chunkX, sectionY, chunkZ));
+        return section == null || section.isRemoved() ? null : section;
+    }
+
+    @Override
+    public void forEachTrackedChunkSection(Consumer<TrackedChunkSection> action) {
+        knownChunkSections.forEachValue(section -> {
+            if (!section.isRemoved()) {
+                action.accept(section);
+            }
+        });
+    }
+
+    @Override
+    public void refreshDirtySectionVisConnectivity() {
+        knownChunkSections.forEachValue(section -> {
+            if (!section.isRemoved() && section.visConnectivityDirty()) {
+                refreshVisConnectivity(section);
+            }
+        });
+    }
+
+    @Override
+    public boolean isChunkSectionVisible(UUID world, int chunkX, int sectionY, int chunkZ) {
+        if (!modeEnabled(chunkSectionCheckModeTokenAcquire())) {
+            return true;
+        }
+        if (!isTrackedWorld(world)) {
+            return true;
+        }
+        NettyChunkSection section = getTrackedChunkSection(world, chunkX, sectionY, chunkZ);
+        return section == null || section.visible();
+    }
+
+    @Override
+    public void applyChunkSectionVisibilityDecision(TrackedChunkSection section, boolean visible, int currentTick, long modeToken, int expectedWorldEpoch) {
+        if (!(section instanceof NettyChunkSection nettyChunkSection)) {
+            return;
+        }
+        commitChunkSectionVisibilityDecision(nettyChunkSection, nettyChunkSection.visible(), visible, currentTick, modeToken, expectedWorldEpoch);
+    }
+
+    private void commitChunkSectionVisibilityDecision(NettyChunkSection section, boolean currentVisibility, boolean shouldBeVisible, int currentTick, long modeToken, int expectedWorldEpoch) {
+        if (!isCurrentWorldEpoch(expectedWorldEpoch) || chunkSectionCheckModeTokenAcquire() != modeToken) {
+            return;
+        }
+        if (!modeEnabled(modeToken)) {
+            shouldBeVisible = true;
+        }
+        boolean visibilityChanged = currentVisibility != shouldBeVisible;
+        section.setVisible(shouldBeVisible);
+        section.setLastChecked(currentTick);
+        if (visibilityChanged) {
+            sectionTransitions.add(new ChunkSectionViewTransition(
+                    shouldBeVisible ? ChunkSectionViewTransition.Type.SHOW : ChunkSectionViewTransition.Type.HIDE,
+                    section,
+                    modeToken,
+                    expectedWorldEpoch
+            ));
+        }
+    }
+
+    @Override
+    public void recordOutboundChunkSectionVisibility(TrackedChunkSection section, boolean visible) {
+        if (section != null) {
+            section.setVisible(visible);
+            section.setLastChecked(TrackedChunkSection.NEVER_CHECKED);
+        }
+    }
+
+    @Override
+    public void applyChunkSectionCheckMode(boolean enabled, int currentTick) {
+        long current = chunkSectionCheckModeTokenAcquire();
+        if (modeEnabled(current) == enabled) {
+            return;
+        }
+        long next = ((current >>> 1) + 1L) << 1;
+        if (enabled) {
+            knownChunkSections.forEachValue(section -> section.setLastChecked(TrackedChunkSection.NEVER_CHECKED));
+            CHUNK_SECTION_CHECK_MODE_TOKEN.setRelease(this, next | 1L);
+            return;
+        }
+
+        CHUNK_SECTION_CHECK_MODE_TOKEN.setRelease(this, next);
+        int worldEpoch = worldEpochSupplier.getAsInt();
+        knownChunkSections.forEachValue(section -> {
+            if (!section.visible()) {
+                commitChunkSectionVisibilityDecision(section, false, true, currentTick, next, worldEpoch);
+            }
+        });
+    }
+
+    @Override
+    public long chunkSectionCheckModeToken() {
+        return chunkSectionCheckModeTokenAcquire();
+    }
+
+    @Override
+    public boolean isCurrentEnabledChunkSectionMode(long modeToken) {
+        return modeEnabled(modeToken) && chunkSectionCheckModeTokenAcquire() == modeToken;
+    }
+
+    @Override
+    public int updateChunkSectionVisibilityForEachNeedingRecheck(int recheckTicks, int currentTick, long modeToken, int expectedWorldEpoch, ChunkSectionVisibilityResolver action) {
+        if (!isCurrentEnabledChunkSectionMode(modeToken) || !isCurrentWorldEpoch(expectedWorldEpoch)) {
+            return 0;
+        }
+        int[] processed = {0};
+        knownChunkSections.forEachValue(section -> {
+            if (section.isRemoved()) {
+                return;
+            }
+            boolean currentVisibility = section.visible();
+            int lastChecked = section.lastChecked();
+            if (currentVisibility && lastChecked != TrackedChunkSection.NEVER_CHECKED && (recheckTicks < 0 || currentTick - lastChecked < recheckTicks)) {
+                return;
+            }
+            byte shouldBeVisible = action.setVisible(section);
+            if (shouldBeVisible != ChunkSectionVisibilityResolver.SKIPPED) {
+                commitChunkSectionVisibilityDecision(section, currentVisibility, shouldBeVisible == ChunkSectionVisibilityResolver.SHOW, currentTick, modeToken, expectedWorldEpoch);
+            }
+            processed[0]++;
+        });
+        return processed[0];
+    }
+
+    @Override
+    public boolean hasPendingSectionTransitions() {
+        return !sectionTransitions.isEmpty();
+    }
+
+    @Override
+    public List<ChunkSectionViewTransition> drainSectionTransitions() {
+        List<ChunkSectionViewTransition> drained = new ArrayList<>();
+        ChunkSectionViewTransition transition;
+        while ((transition = sectionTransitions.poll()) != null) {
+            drained.add(transition);
+        }
+        return drained;
+    }
+
+    @Override
+    public BlockChunkData getBlockChunkData(int chunkX, int sectionY, int chunkZ) {
+        if (!(chunks instanceof BlockChunkSectionStore blockStore)) {
+            return null;
+        }
+        return blockStore.getSection(chunkX, sectionY, chunkZ);
+    }
+
+    @Override
     public void upsertBlock(UUID world, int x, int y, int z, int blockID) {
         if (!ensureTrackedWorld(world)) {
             return;
         }
         chunks.setBlockID(x, y, z, blockID);
+        NettyChunkSection tracked = getTrackedChunkSection(world, x >> 4, y >> 4, z >> 4);
+        if (tracked != null) {
+            tracked.markVisConnectivityDirty();
+        }
     }
 
     @Override
@@ -285,6 +468,7 @@ public abstract class AbstractBlockView<R extends Clearable, T extends NettyTile
         }
         chunks.removeColumn(chunkX, chunkZ);
         removeTileEntitiesInChunk(chunkX, chunkZ);
+        removeTrackedSectionsInChunk(chunkX, chunkZ);
     }
 
     @Override
@@ -293,6 +477,7 @@ public abstract class AbstractBlockView<R extends Clearable, T extends NettyTile
             return;
         }
         chunks.removeSection(chunkX, chunkY, chunkZ);
+        removeTrackedSection(chunkX, chunkY, chunkZ);
     }
 
     @Override
@@ -333,6 +518,10 @@ public abstract class AbstractBlockView<R extends Clearable, T extends NettyTile
             return;
         }
         chunks.replaceSection(chunkX, chunkY, chunkZ, data);
+        NettyChunkSection tracked = getTrackedChunkSection(world, chunkX, chunkY, chunkZ);
+        if (tracked != null) {
+            tracked.setVisConnectivity(SectionVisGraph.computeConnectivity(data));
+        }
     }
 
     @Override
@@ -344,6 +533,25 @@ public abstract class AbstractBlockView<R extends Clearable, T extends NettyTile
             return;
         }
         chunks.replaceSectionOcclusion(chunkX, chunkY, chunkZ, data);
+        NettyChunkSection tracked = getTrackedChunkSection(world, chunkX, chunkY, chunkZ);
+        if (tracked != null) {
+            tracked.setVisConnectivity(SectionVisGraph.computeConnectivity(data));
+        }
+    }
+
+    private void refreshVisConnectivity(NettyChunkSection section) {
+        ChunkOcclusionView data = sectionOcclusionView(section.chunkX(), section.sectionY(), section.chunkZ());
+        section.setVisConnectivity(SectionVisGraph.computeConnectivity(data));
+    }
+
+    private ChunkOcclusionView sectionOcclusionView(int chunkX, int sectionY, int chunkZ) {
+        if (chunks instanceof BlockChunkSectionStore blockStore) {
+            return blockStore.getSection(chunkX, sectionY, chunkZ);
+        }
+        if (chunks instanceof OccludingChunkSectionStore occlusionStore) {
+            return occlusionStore.get(packChunkCoords(chunkX, sectionY, chunkZ));
+        }
+        return null;
     }
 
     @Override
@@ -374,7 +582,30 @@ public abstract class AbstractBlockView<R extends Clearable, T extends NettyTile
         chunks.clear();
         forEachTileEntity(NettyTileEntity::markRemoved);
         knownTileEntitiesByColumnBucket.clear();
+        knownChunkSections.forEachValue(NettyChunkSection::markRemoved);
+        knownChunkSections.clear();
         transitions.clear();
+        sectionTransitions.clear();
+    }
+
+    private void removeTrackedSection(int chunkX, int sectionY, int chunkZ) {
+        long key = packChunkCoords(chunkX, sectionY, chunkZ);
+        NettyChunkSection section = knownChunkSections.remove(key);
+        if (section != null) {
+            section.markRemoved();
+        }
+    }
+
+    private void removeTrackedSectionsInChunk(int chunkX, int chunkZ) {
+        // Visit every packed section Y for this column, matching ChunkSectionStore.removeColumn.
+        long key = packChunkCoords(chunkX, 0, chunkZ);
+        for (int i = 0; i < ChunkSectionStore.SECTION_Y_COUNT; i++) {
+            NettyChunkSection section = knownChunkSections.remove(key);
+            if (section != null) {
+                section.markRemoved();
+            }
+            key += ChunkSectionStore.SECTION_Y_INCREMENT;
+        }
     }
 
     private void removeTileEntitiesInChunk(int chunkX, int chunkZ) {
@@ -447,6 +678,10 @@ public abstract class AbstractBlockView<R extends Clearable, T extends NettyTile
 
     private long tileEntityCheckModeTokenAcquire() {
         return (long) TILE_ENTITY_CHECK_MODE_TOKEN.getAcquire(this);
+    }
+
+    private long chunkSectionCheckModeTokenAcquire() {
+        return (long) CHUNK_SECTION_CHECK_MODE_TOKEN.getAcquire(this);
     }
 
     private void forEachTileEntity(Consumer<NettyTileEntity<R>> action) {

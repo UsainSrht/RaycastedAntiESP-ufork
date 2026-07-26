@@ -12,7 +12,9 @@ import com.github.retrooper.packetevents.protocol.world.chunk.TileEntity;
 import com.github.retrooper.packetevents.protocol.world.chunk.impl.v_1_18.Chunk_v1_18;
 import games.cubi.locatables.implementations.ImmutableBlockLocatable;
 import games.cubi.locatables.implementations.ImmutableBlockSpatialImpl;
+import games.cubi.locatables.implementations.MutableBlockLocatable;
 import games.cubi.raycastedantiesp.core.chunks.BlockInfoResolver;
+import games.cubi.raycastedantiesp.core.tracked.TrackedChunkSection;
 import games.cubi.raycastedantiesp.core.tracked.TrackedTileEntity;
 import games.cubi.raycastedantiesp.packetevents.view.PacketEventsBlockView;
 import org.junit.jupiter.api.BeforeAll;
@@ -312,6 +314,53 @@ class ChunkParserTest {
         section.set(1, 2, 1, 99);
         TileEntity tile = new TileEntity((byte) (1 << 4 | 1), (short) 2, 0, null);
         return new Column(0, 0, true, new BaseChunk[]{section}, new TileEntity[]{tile}, heightmaps);
+    }
+
+    @Test
+    void sectionContextHidesOccludedSectionAsEmptyWhileKeepingStoredBlocks() {
+        UUID world = UUID.randomUUID();
+        Chunk_v1_18 section = airSection();
+        section.set(3, 2, 1, 1);
+        Column column = new Column(10, 10, true, new BaseChunk[]{section}, new TileEntity[0]);
+        PacketEventsBlockView view = new PacketEventsBlockView(RESOLVER, true, STABLE_WORLD_EPOCH);
+        view.applyChunkSectionCheckMode(true, 0);
+        // Viewer far from chunk (10,10) so always-show radius 2 does not force visibility.
+        ChunkSectionParseContext context = new ChunkSectionParseContext(
+                new MutableBlockLocatable(world, 0, 8, 0),
+                2
+        );
+
+        Column replacement = new NonMutatingBlockChunkParser(RESOLVER, ignored -> 1)
+                .parse(view, world, column, 0, context);
+
+        assertNotNull(replacement);
+        assertTrue(replacement.getChunks()[0].isEmpty());
+        assertNotNull(view.getBlockChunkData(10, 0, 10));
+        assertEquals(1, view.getBlockChunkData(10, 0, 10).getBlockID(3, 2, 1));
+        TrackedChunkSection tracked = view.getTrackedChunkSection(world, 10, 0, 10);
+        assertNotNull(tracked);
+        assertFalse(tracked.visible());
+    }
+
+    @Test
+    void sectionContextKeepsNearbySectionVisibleOnWire() {
+        UUID world = UUID.randomUUID();
+        Chunk_v1_18 section = airSection();
+        section.set(3, 2, 1, 1);
+        Column column = new Column(0, 0, true, new BaseChunk[]{section}, new TileEntity[0]);
+        PacketEventsBlockView view = new PacketEventsBlockView(RESOLVER, true, STABLE_WORLD_EPOCH);
+        view.applyChunkSectionCheckMode(true, 0);
+        ChunkSectionParseContext context = new ChunkSectionParseContext(
+                new MutableBlockLocatable(world, 8, 8, 8),
+                2
+        );
+
+        Column replacement = new NonMutatingBlockChunkParser(RESOLVER, ignored -> 1)
+                .parse(view, world, column, 0, context);
+
+        assertNull(replacement);
+        assertEquals(1, section.getBlockId(3, 2, 1));
+        assertTrue(view.getTrackedChunkSection(world, 0, 0, 0).visible());
     }
 
     private static Chunk_v1_18 airSection() {

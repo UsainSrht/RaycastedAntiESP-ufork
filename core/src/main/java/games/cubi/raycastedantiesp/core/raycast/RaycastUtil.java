@@ -40,4 +40,66 @@ public class RaycastUtil {
         }
         return true;
     }
+
+    /**
+     * Raycasts toward {@code end}, succeeding as soon as a step enters the target section AABB.
+     * Occluding blocks inside the target section are ignored (shell visibility, not buried-center).
+     */
+    public static boolean raycastUntilSectionEntry(
+            Locatable start,
+            Spatial end,
+            int targetChunkX,
+            int targetSectionY,
+            int targetChunkZ,
+            int maxOccluding,
+            int alwaysShowRadius,
+            int maxRaycastRadius,
+            boolean debug,
+            BlockView snap,
+            int stepSize,
+            ParticleSpawner particleSpawner
+    ) {
+        if (ChunkSectionVisibilityUtil.isEyeInsideSection(start.x(), start.y(), start.z(), targetChunkX, targetSectionY, targetChunkZ)) {
+            return true;
+        }
+        MutableFloatingSpatial clonedEnd = end.cloneAndIfBlockThenCentre();
+        double total = start.distance(clonedEnd) - stepSize;
+        if (total <= alwaysShowRadius) {
+            return true;
+        }
+        if (total > maxRaycastRadius) {
+            return false;
+        }
+        if (debug && particleSpawner == null) {
+            Logger.errorAndReturn(new RuntimeException("raycastUntilSectionEntry called with debug enabled but no ParticleSpawner supplied"), 2, RaycastUtil.class);
+        }
+
+        Spatial dir = clonedEnd.subtract(start).normalise().scalarMultiply(stepSize);
+        MutableFloatingSpatial current = new MutableSpatialImpl(start.x(), start.y(), start.z());
+
+        for (double traveled = 0; traveled < total; traveled += stepSize) {
+            current.add(dir);
+            if (ChunkSectionVisibilityUtil.isBlockInSection(current.blockX(), current.blockY(), current.blockZ(), targetChunkX, targetSectionY, targetChunkZ)) {
+                if (debug) {
+                    particleSpawner.spawnParticleAt(start.world(), current, ParticleSpawner.Colour.GREEN);
+                }
+                return true;
+            }
+            if (snap.isBlockOccluding(current.blockX(), current.blockY(), current.blockZ())) {
+                maxOccluding--;
+                if (debug) {
+                    particleSpawner.spawnParticleAt(start.world(), current, ParticleSpawner.Colour.RED);
+                }
+                if (maxOccluding < 1) {
+                    return false;
+                }
+                continue;
+            }
+            if (debug) {
+                particleSpawner.spawnParticleAt(start.world(), current, ParticleSpawner.Colour.GREEN);
+            }
+        }
+        // Endpoint may sit on the shell without an intermediate step registering inside; treat as success if end is in section.
+        return ChunkSectionVisibilityUtil.isBlockInSection(clonedEnd.blockX(), clonedEnd.blockY(), clonedEnd.blockZ(), targetChunkX, targetSectionY, targetChunkZ);
+    }
 }

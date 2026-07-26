@@ -2,9 +2,12 @@ package games.cubi.raycastedantiesp.packetevents.viewcontrollers;
 
 import games.cubi.locatables.implementations.ImmutableBlockSpatialImpl;
 import games.cubi.raycastedantiesp.core.chunks.BlockInfoResolver;
+import games.cubi.raycastedantiesp.core.tracked.NettyChunkSection;
 import games.cubi.raycastedantiesp.core.tracked.NettyTileEntity;
+import games.cubi.raycastedantiesp.core.tracked.TrackedChunkSection;
 import games.cubi.raycastedantiesp.core.tracked.TrackedTileEntity;
 import games.cubi.raycastedantiesp.core.view.BlockViewTransition;
+import games.cubi.raycastedantiesp.core.view.ChunkSectionViewTransition;
 import games.cubi.raycastedantiesp.packetevents.view.PacketEventsBlockView;
 import org.junit.jupiter.api.Test;
 
@@ -101,5 +104,35 @@ class PacketEventsBlockViewControllerTest {
 
         assertNull(PacketEventsBlockViewController.resolveCurrentTransitionState(transition, worldEpoch.getAcquire()));
         assertTrue(replacement.visible());
+    }
+
+    @Test
+    void sectionTransitionCannotTargetReplacementAtSameCoordinates() {
+        UUID world = UUID.randomUUID();
+        PacketEventsBlockView view = new PacketEventsBlockView(RESOLVER, true, STABLE_WORLD_EPOCH);
+        view.applyChunkSectionCheckMode(true, 0);
+        TrackedChunkSection original = view.updateOrInsertChunkSection(world, 3, 4, 5, true);
+        view.applyChunkSectionVisibilityDecision(original, false, 1, view.chunkSectionCheckModeToken(), 2);
+        ChunkSectionViewTransition transition = view.drainSectionTransitions().getFirst();
+
+        view.removeChunkSection(world, 3, 4, 5);
+        TrackedChunkSection replacement = view.updateOrInsertChunkSection(world, 3, 4, 5, true);
+
+        assertSame(original, transition.section());
+        assertTrue(((NettyChunkSection) original).isRemoved());
+        assertNull(PacketEventsBlockViewController.resolveCurrentSectionTransitionState(transition, 2));
+        assertTrue(replacement.visible());
+    }
+
+    @Test
+    void currentSectionTransitionStillResolvesByIdentity() {
+        UUID world = UUID.randomUUID();
+        PacketEventsBlockView view = new PacketEventsBlockView(RESOLVER, true, STABLE_WORLD_EPOCH);
+        view.applyChunkSectionCheckMode(true, 0);
+        TrackedChunkSection section = view.updateOrInsertChunkSection(world, 3, 4, 5, true);
+        view.applyChunkSectionVisibilityDecision(section, false, 1, view.chunkSectionCheckModeToken(), 2);
+        ChunkSectionViewTransition transition = view.drainSectionTransitions().getFirst();
+
+        assertSame(transition.section(), PacketEventsBlockViewController.resolveCurrentSectionTransitionState(transition, 2));
     }
 }

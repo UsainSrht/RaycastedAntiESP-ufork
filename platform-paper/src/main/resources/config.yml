@@ -30,11 +30,18 @@ checks:
         max-occluding-count: 3
         always-play-radius: 8
         raycast-radius: 48
+    # Requires block-processor.track-all-blocks: true and a full restart. Hidden sections are sent as empty air.
     chunk-section:
         enabled: false
-        max-occluding-count: 6
-        always-show-radius-chunks: 2
-        visible-recheck-interval-ticks: -1
+        max-occluding-count: 2
+        # Horizontal Chebyshev only (chunks). Vertical is controlled separately so caves under you are not force-shown.
+        always-show-radius-chunks: 4
+        always-show-vertical-sections: 1
+        raycast-radius-chunks: 6
+        # How often visible sections are re-tested. 0/-1 = every tick (expensive). Prefer 5–10.
+        visible-recheck-interval-ticks: 5
+        hide-delay-ticks: 3
+        neighbor-padding: true
 engine:
     mode: async
     async:
