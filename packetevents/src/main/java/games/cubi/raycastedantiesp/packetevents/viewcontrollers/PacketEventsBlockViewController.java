@@ -397,14 +397,6 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
         for (long columnKey : columnsToResend) {
             CachedWireColumn cached = wireColumns == null ? null : wireColumns.get(columnKey);
             if (cached == null) {
-                // Fallback: per-section multiblock if we never saw CHUNK_DATA for this column.
-                for (ChunkSectionViewTransition transition : applied) {
-                    TrackedChunkSection section = transition.section();
-                    if (packColumnKey(section.chunkX(), section.chunkZ()) != columnKey) {
-                        continue;
-                    }
-                    sendSectionMultiBlockFallback(viewer, blockView, section, transition.type());
-                }
                 continue;
             }
             sendColumnVisibilityUpdate(viewer, blockView, world, cached);
@@ -412,6 +404,11 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
 
         for (ChunkSectionViewTransition transition : applied) {
             TrackedChunkSection section = transition.section();
+            long columnKey = packColumnKey(section.chunkX(), section.chunkZ());
+            CachedWireColumn cached = wireColumns == null ? null : wireColumns.get(columnKey);
+            if (cached == null) {
+                continue;
+            }
             boolean show = transition.type() == ChunkSectionViewTransition.Type.SHOW;
             if (show) {
                 requeueTilesInSection(blockView, world, section);
