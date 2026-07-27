@@ -20,6 +20,7 @@ import games.cubi.raycastedantiesp.core.chunks.BlockChunkData;
 import games.cubi.raycastedantiesp.core.chunks.ChunkData;
 import games.cubi.raycastedantiesp.core.config.ConfigManager;
 import games.cubi.raycastedantiesp.core.config.raycast.ChunkSectionConfig;
+import games.cubi.raycastedantiesp.core.tracked.TrackedChunkSection;
 import games.cubi.raycastedantiesp.core.tracked.TrackedEntity;
 import games.cubi.raycastedantiesp.core.players.PlayerData;
 import games.cubi.raycastedantiesp.core.players.PlayerRegistry;
@@ -34,6 +35,7 @@ import games.cubi.raycastedantiesp.paper.packets.PacketEventsPaperBlockInfoResol
 
 import games.cubi.raycastedantiesp.paper.utils.PaperScheduler;
 import io.github.retrooper.packetevents.util.SpigotConversionUtil;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 
 import net.strokkur.commands.*;
@@ -52,9 +54,12 @@ import org.jetbrains.annotations.NotNull;
 
 import com.github.retrooper.packetevents.protocol.world.states.WrappedBlockState;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 // Credit to Strokkur for making StrokkCommands, a non-hideous way to use the power of brigadier.
 
@@ -242,21 +247,21 @@ public class RaycastedAntiESPCommand {
         private void statusChunkSection(CommandSender sender, Player viewer) {
             PlayerData playerData = PlayerRegistry.getInstance().getPlayerData(viewer.getUniqueId());
             if (playerData == null) {
-                reportChunkSectionLine(sender, "Player data not loaded for " + describeViewer(viewer.getUniqueId()) + ".");
+                reportChunkSectionLine(sender, "<red>Player data not loaded for " + describeViewer(viewer.getUniqueId()) + ".");
                 return;
             }
             Locatable eye = playerData.ownLocation();
             if (eye == null || eye.world() == null) {
-                reportChunkSectionLine(sender, "Viewer has no location yet.");
+                reportChunkSectionLine(sender, "<red>Viewer has no location yet.");
                 return;
             }
             ChunkSectionConfig sectionConfig = ConfigManager.get().getChunkSectionConfig();
             if (!sectionConfig.enabled()) {
-                reportChunkSectionLine(sender, "checks.chunk-section.enabled is false — enable it for live culling.");
+                reportChunkSectionLine(sender, "<yellow>checks.chunk-section.enabled is false — enable it for live culling.</yellow>");
             }
 
-            reportChunkSectionLine(sender, "----- chunk-section status (scanning…) -----");
-            reportChunkSectionLine(sender, "viewer=" + describeViewer(viewer.getUniqueId()));
+            reportChunkSectionLine(sender, "<gold>----- <yellow><bold>chunk-section status (scanning…)</bold></yellow> -----</gold>");
+            reportChunkSectionLine(sender, "<gray>viewer=</gray><white>" + describeViewer(viewer.getUniqueId()) + "</white>");
             final CommandSender reportTo = sender;
             final PlayerData data = playerData;
             final Locatable eyeSnapshot = eye;
@@ -270,44 +275,44 @@ public class RaycastedAntiESPCommand {
         }
 
         private static void sendStatusReport(CommandSender sender, ChunkSectionStatusReport report) {
-            reportChunkSectionLine(sender, "sections total=" + report.total()
-                    + " shown=" + report.shown()
-                    + " hidden=" + report.hidden());
-            reportChunkSectionLine(sender, "raycasts cast=" + report.raycastsCast()
-                    + " succeeded=" + report.raycastsSucceeded()
-                    + " occluded=" + report.raycastsOccluded()
-                    + " skippedHide=" + report.skippedRaycastHide());
+            reportChunkSectionLine(sender, "<gray>sections total=</gray><white>" + report.total()
+                    + "</white> <gray>shown=</gray><green>" + report.shown()
+                    + "</green> <gray>hidden=</gray><red>" + report.hidden() + "</red>");
+            reportChunkSectionLine(sender, "<gray>raycasts cast=</gray><white>" + report.raycastsCast()
+                    + "</white> <gray>succeeded=</gray><green>" + report.raycastsSucceeded()
+                    + "</green> <gray>occluded=</gray><red>" + report.raycastsOccluded()
+                    + "</red> <gray>skippedHide=</gray><yellow>" + report.skippedRaycastHide() + "</yellow>");
             if (report.hideReasons().isEmpty()) {
-                reportChunkSectionLine(sender, "hideReasons=(none)");
+                reportChunkSectionLine(sender, "<gray>hideReasons=</gray><dark_gray>(none)</dark_gray>");
             } else {
-                StringBuilder reasons = new StringBuilder("hideReasons=");
+                StringBuilder reasons = new StringBuilder("<gray>hideReasons=</gray>");
                 boolean first = true;
                 for (Map.Entry<String, Integer> entry : report.hideReasons().entrySet()) {
                     if (!first) {
-                        reasons.append(' ');
+                        reasons.append(" ");
                     }
                     first = false;
-                    reasons.append(entry.getKey()).append(' ').append(entry.getValue()).append('x');
+                    reasons.append("<yellow>").append(entry.getKey()).append(" ").append(entry.getValue()).append("x</yellow>");
                 }
                 reportChunkSectionLine(sender, reasons.toString());
             }
-            reportChunkSectionLine(sender, "----- end chunk-section status -----");
+            reportChunkSectionLine(sender, "<gold>----- <yellow>end chunk-section status</yellow> -----</gold>");
         }
 
         private void testChunkSection(CommandSender sender, Player viewer, int blockX, int blockY, int blockZ) {
             PlayerData playerData = PlayerRegistry.getInstance().getPlayerData(viewer.getUniqueId());
             if (playerData == null) {
-                reportChunkSectionLine(sender, "Player data not loaded for " + describeViewer(viewer.getUniqueId()) + ".");
+                reportChunkSectionLine(sender, "<red>Player data not loaded for " + describeViewer(viewer.getUniqueId()) + ".");
                 return;
             }
             Locatable eye = playerData.ownLocation();
             if (eye == null || eye.world() == null) {
-                reportChunkSectionLine(sender, "Viewer has no location yet.");
+                reportChunkSectionLine(sender, "<red>Viewer has no location yet.");
                 return;
             }
             ChunkSectionConfig sectionConfig = ConfigManager.get().getChunkSectionConfig();
             if (!sectionConfig.enabled()) {
-                reportChunkSectionLine(sender, "checks.chunk-section.enabled is false — enable it for live culling.");
+                reportChunkSectionLine(sender, "<yellow>checks.chunk-section.enabled is false — enable it for live culling.</yellow>");
             }
 
             int chunkX = blockX >> 4;
@@ -317,38 +322,178 @@ public class RaycastedAntiESPCommand {
                     eye, blockX, blockY, blockZ, sectionConfig, playerData.blockView()
             );
 
-            reportChunkSectionLine(sender, "----- chunk-section LOS test -----");
-            reportChunkSectionLine(sender, "viewer=" + describeViewer(viewer.getUniqueId()));
-            reportChunkSectionLine(sender, "block=" + blockX + " " + blockY + " " + blockZ
-                    + " → section=" + chunkX + " " + sectionY + " " + chunkZ);
-            reportChunkSectionLine(sender, "tracked=" + decision.trackedPresent()
-                    + " clientVisible=" + decision.trackedVisible());
-            reportChunkSectionLine(sender, "decision=" + (decision.wouldShow() ? "SHOW" : "HIDE")
-                    + " reason=" + decision.reason());
+            TrackedChunkSection tracked = playerData.blockView().getTrackedChunkSection(eye.world(), chunkX, sectionY, chunkZ);
+
+            reportChunkSectionLine(sender, "<gold>----- <yellow><bold>chunk-section LOS test</bold></yellow> -----</gold>");
+            reportChunkSectionLine(sender, "<gray>viewer=</gray><white>" + describeViewer(viewer.getUniqueId()) + "</white>");
+            reportChunkSectionLine(sender, "<gray>block=</gray><yellow>" + blockX + " " + blockY + " " + blockZ
+                    + "</yellow> <gray>→</gray> <gray>section=</gray><aqua>" + chunkX + " " + sectionY + " " + chunkZ + "</aqua>");
+            reportChunkSectionLine(sender, "<gray>tracked=</gray>" + (decision.trackedPresent() ? "<green>true</green>" : "<red>false</red>")
+                    + " <gray>clientVisible=</gray>" + (decision.trackedVisible() ? "<green>true</green>" : "<red>false</red>"));
+            reportChunkSectionLine(sender, "<gray>decision=</gray>" + (decision.wouldShow() ? "<green><bold>SHOW</bold></green>" : "<red><bold>HIDE</bold></red>")
+                    + " <gray>reason=</gray><yellow>" + decision.reason() + "</yellow>");
+
+            List<String> clientReasons = buildClientVisibleReasons(
+                    eye, chunkX, sectionY, chunkZ, sectionConfig, playerData.blockView(), tracked, decision
+            );
+            String formattedReasons = clientReasons.stream()
+                    .map(reason -> colorizeReason(reason))
+                    .collect(Collectors.joining("<gray>; </gray>"));
+            reportChunkSectionLine(sender, "<gray>clientVisibleReason=</gray>" + formattedReasons);
+
             if (decision.trackedVisible() && !decision.wouldShow()) {
-                reportChunkSectionLine(sender, "note=client still visible while LOS says HIDE (sticky recheck / neighbor-padding / hide-delay)");
+                reportChunkSectionLine(sender, "<gray>note=</gray><yellow>client still visible while LOS says HIDE (see clientVisibleReason above)</yellow>");
             }
-            reportChunkSectionLine(sender, "eyeInside=" + decision.eyeInside()
-                    + " alwaysShow=" + decision.alwaysShow()
-                    + " inRadius=" + decision.withinRaycastRadius()
-                    + " fullyOpen=" + decision.fullyOpen()
-                    + " visGraphAutoHide=" + decision.visGraphAutoHide()
-                    + " visGraphUnreachableBelow=" + decision.visGraphUnreachableBelow()
-                    + " raycast=" + decision.raycastLos());
+
+            reportChunkSectionLine(sender, "<gray>eyeInside=</gray>" + (decision.eyeInside() ? "<green>true</green>" : "<white>false</white>")
+                    + " <gray>alwaysShow=</gray>" + (decision.alwaysShow() ? "<green>true</green>" : "<white>false</white>")
+                    + " <gray>inRadius=</gray>" + (decision.withinRaycastRadius() ? "<green>true</green>" : "<red>false</red>")
+                    + " <gray>fullyOpen=</gray>" + (decision.fullyOpen() ? "<green>true</green>" : "<white>false</white>")
+                    + " <gray>visGraphAutoHide=</gray>" + (decision.visGraphAutoHide() ? "<red>true</red>" : "<white>false</white>")
+                    + " <gray>visGraphUnreachableBelow=</gray>" + (decision.visGraphUnreachableBelow() ? "<yellow>true</yellow>" : "<white>false</white>")
+                    + " <gray>raycast=</gray>" + (decision.raycastLos() ? "<green>true</green>" : "<red>false</red>"));
             sendSectionContentSummary(sender, playerData, chunkX, sectionY, chunkZ, decision.fullyOpen());
 
             boolean raysOn = playerData.toggleChunkSectionRayDebugTarget(chunkX, sectionY, chunkZ);
             if (raysOn) {
-                reportChunkSectionLine(sender, "focused ray debug=ON (only this section, every 5 ticks)");
+                reportChunkSectionLine(sender, "<gray>focused ray debug=</gray><green><bold>ON</bold></green> <gray>(only this section, every 5 ticks)</gray>");
             } else {
-                reportChunkSectionLine(sender, "focused ray debug=OFF");
+                reportChunkSectionLine(sender, "<gray>focused ray debug=</gray><red><bold>OFF</bold></red>");
             }
-            reportChunkSectionLine(sender, "----- end chunk-section LOS test -----");
+            reportChunkSectionLine(sender, "<gold>----- <yellow>end chunk-section LOS test</yellow> -----</gold>");
+        }
+
+        private static List<String> buildClientVisibleReasons(
+                Locatable eye,
+                int chunkX,
+                int sectionY,
+                int chunkZ,
+                ChunkSectionConfig sectionConfig,
+                games.cubi.raycastedantiesp.core.view.BlockView blockView,
+                TrackedChunkSection tracked,
+                ChunkSectionLosProbe.Decision decision
+        ) {
+            List<String> reasons = new ArrayList<>();
+
+            if (tracked == null) {
+                reasons.add("UNTRACKED (section is not tracked in block view — default client rendering)");
+                return reasons;
+            }
+
+            if (!tracked.visible()) {
+                reasons.add("HIDDEN (section is culled and hidden as air on client)");
+                return reasons;
+            }
+
+            if (decision.wouldShow()) {
+                reasons.add("DIRECT_SHOW: " + decision.reason());
+            }
+
+            boolean neighborPadding = sectionConfig.neighborPadding();
+            int preemptiveReveal = sectionConfig.preemptiveNeighborReveal();
+            int r = Math.max(preemptiveReveal > 0 ? preemptiveReveal : 0, neighborPadding ? 1 : 0);
+
+            if (r > 0) {
+                LongOpenHashSet reachable = new LongOpenHashSet();
+                LongOpenHashSet frontier = new LongOpenHashSet();
+                ChunkSectionLosProbe.collectFrontierFromEye(eye, sectionConfig.raycastRadiusChunks(), blockView, reachable, frontier);
+
+                List<String> neighborPaddingDetails = new ArrayList<>();
+                for (int dx = -r; dx <= r; dx++) {
+                    for (int dy = -r; dy <= r; dy++) {
+                        for (int dz = -r; dz <= r; dz++) {
+                            if (dx == 0 && dy == 0 && dz == 0) continue;
+                            int nx = chunkX + dx;
+                            int ny = sectionY + dy;
+                            int nz = chunkZ + dz;
+                            TrackedChunkSection neighborTracked = blockView.getTrackedChunkSection(eye.world(), nx, ny, nz);
+                            if (neighborTracked != null) {
+                                ChunkSectionLosProbe.Decision neighborDecision = ChunkSectionLosProbe.evaluateSection(
+                                        eye, nx, ny, nz, sectionConfig, blockView, reachable, frontier
+                                );
+                                if (neighborDecision.wouldShow() && (preemptiveReveal > 0 || neighborTracked.visible())) {
+                                    neighborPaddingDetails.add("section " + nx + " " + ny + " " + nz + " (" + neighborDecision.reason() + ")");
+                                }
+                            }
+                        }
+                    }
+                }
+                if (!neighborPaddingDetails.isEmpty()) {
+                    if (neighborPaddingDetails.size() == 1) {
+                        reasons.add("NEIGHBOR_PADDING from " + neighborPaddingDetails.get(0));
+                    } else {
+                        reasons.add("NEIGHBOR_PADDING from " + neighborPaddingDetails.size() + " neighbors (e.g. " + neighborPaddingDetails.get(0) + ")");
+                    }
+                }
+            }
+
+            int wantHiddenSince = tracked.wantHiddenSinceTick();
+            if (wantHiddenSince != TrackedChunkSection.NOT_WANTING_HIDE) {
+                int currentTick = Bukkit.getCurrentTick();
+                int elapsed = currentTick - wantHiddenSince;
+                int delayTicks = sectionConfig.hideDelayTicks();
+                if (elapsed < delayTicks) {
+                    reasons.add("HIDE_DELAY_PENDING (elapsed " + elapsed + "/" + delayTicks + " ticks)");
+                } else {
+                    reasons.add("HIDE_DELAY_ELAPSED (wanted hide since tick " + wantHiddenSince + ")");
+                }
+            }
+
+            int lastChecked = tracked.lastChecked();
+            if (lastChecked != TrackedChunkSection.NEVER_CHECKED) {
+                int currentTick = Bukkit.getCurrentTick();
+                int age = currentTick - lastChecked;
+                int recheckTicks = sectionConfig.visibleRecheckIntervalTicks();
+                if (recheckTicks > 0 && age < recheckTicks) {
+                    reasons.add("STICKY_RECHECK (last checked " + age + "/" + recheckTicks + " ticks ago)");
+                }
+            } else {
+                reasons.add("UNCHECKED (tracked but never evaluated by engine tick yet)");
+            }
+
+            if (reasons.isEmpty()) {
+                reasons.add("CLIENT_VISIBLE (pending engine tick update)");
+            }
+
+            return reasons;
+        }
+
+        private static String colorizeReason(String reason) {
+            if (reason.startsWith("NEIGHBOR_PADDING")) {
+                int fromIdx = reason.indexOf(" from ");
+                if (fromIdx != -1) {
+                    return "<gold><bold>NEIGHBOR_PADDING</bold></gold> <gray>from " + reason.substring(fromIdx + 6) + "</gray>";
+                }
+                return "<gold><bold>" + reason + "</bold></gold>";
+            }
+            if (reason.startsWith("HIDE_DELAY_PENDING")) {
+                return "<yellow><bold>HIDE_DELAY_PENDING</bold></yellow> <gray>" + reason.substring("HIDE_DELAY_PENDING".length()).trim() + "</gray>";
+            }
+            if (reason.startsWith("HIDE_DELAY_ELAPSED")) {
+                return "<yellow><bold>HIDE_DELAY_ELAPSED</bold></yellow> <gray>" + reason.substring("HIDE_DELAY_ELAPSED".length()).trim() + "</gray>";
+            }
+            if (reason.startsWith("STICKY_RECHECK")) {
+                return "<yellow><bold>STICKY_RECHECK</bold></yellow> <gray>" + reason.substring("STICKY_RECHECK".length()).trim() + "</gray>";
+            }
+            if (reason.startsWith("DIRECT_SHOW")) {
+                return "<green><bold>DIRECT_SHOW</bold></green><gray>: </gray><green>" + reason.substring("DIRECT_SHOW:".length()).trim() + "</green>";
+            }
+            if (reason.startsWith("HIDDEN")) {
+                return "<dark_gray>" + reason + "</dark_gray>";
+            }
+            if (reason.startsWith("UNTRACKED")) {
+                return "<red>" + reason + "</red>";
+            }
+            if (reason.startsWith("UNCHECKED")) {
+                return "<yellow>" + reason + "</yellow>";
+            }
+            return "<yellow>" + reason + "</yellow>";
         }
 
         /** Chat + plain console line (easy to copy from server log). */
-        private static void reportChunkSectionLine(CommandSender sender, String plain) {
-            sender.sendMessage("[RaycastedAntiESP] " + plain);
+        private static void reportChunkSectionLine(CommandSender sender, String richText) {
+            sender.sendRichMessage("<gray>[<gold>RaycastedAntiESP</gold>]</gray> " + richText);
+            String plain = richText.replaceAll("<[^>]+>", "");
             Logger.info("[chunk-section-test] " + plain, 1, RaycastedAntiESPCommand.class);
         }
 
@@ -474,7 +619,7 @@ public class RaycastedAntiESPCommand {
         private void sendSectionContentSummary(CommandSender sender, PlayerData playerData, int chunkX, int sectionY, int chunkZ, boolean fullyOpen) {
             BlockChunkData data = playerData.blockView().getBlockChunkData(chunkX, sectionY, chunkZ);
             if (data == null) {
-                reportChunkSectionLine(sender, "stored=none (air / not in block store)");
+                reportChunkSectionLine(sender, "<gray>stored=</gray><dark_gray>none (air / not in block store)</dark_gray>");
                 return;
             }
             int nonAir = 0;
@@ -493,13 +638,13 @@ public class RaycastedAntiESPCommand {
                     occluding++;
                 }
             }
-            reportChunkSectionLine(sender, "storedCells nonAir=" + nonAir
-                    + " occluding=" + occluding + " total=" + ChunkData.BLOCK_COUNT);
+            reportChunkSectionLine(sender, "<gray>storedCells</gray> <gray>nonAir=</gray><white>" + nonAir
+                    + "</white> <gray>occluding=</gray><white>" + occluding + "</white> <gray>total=</gray><white>" + ChunkData.BLOCK_COUNT + "</white>");
             if (fullyOpen) {
-                reportChunkSectionLine(sender, "fullyOpen=air connects all 6 faces (not 'empty'); occluding="
-                        + occluding + " nonAir=" + nonAir);
+                reportChunkSectionLine(sender, "<gray>fullyOpen=</gray><yellow>air connects all 6 faces (not 'empty'); occluding="
+                        + occluding + " nonAir=" + nonAir + "</yellow>");
             }
-            reportChunkSectionLine(sender, "topBlocks=" + formatTopBlockStates(topIds, 5));
+            reportChunkSectionLine(sender, "<gray>topBlocks=</gray><yellow>" + formatTopBlockStates(topIds, 5) + "</yellow>");
         }
 
         private static String formatTopBlockStates(Map<Integer, Integer> counts, int limit) {
