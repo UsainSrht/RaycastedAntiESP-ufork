@@ -66,6 +66,9 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
     private final PacketEventsCommonViewController common;
     private final Map<UUID, Long2ObjectOpenHashMap<CachedWireColumn>> wireColumnsByViewer = new ConcurrentHashMap<>();
     private final Map<UUID, Double> lastEvaluatedPlayerY = new ConcurrentHashMap<>();
+    private final Map<UUID, Long2ObjectOpenHashMap<CachedWireColumn>> pendingHideBelowYUpdates = new ConcurrentHashMap<>();
+    private static final int MAX_OUTER_CHUNKS_PER_FLUSH = 24;
+    private static final int IMMEDIATE_INNER_RADIUS_SQ = 4;
     private TileEntityConfig tileEntityConfig = null;
     private ChunkSectionConfig chunkSectionConfig = null;
     private HideBelowYConfig hideBelowYConfig = null;
@@ -98,6 +101,7 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
         if (viewerUUID != null) {
             wireColumnsByViewer.remove(viewerUUID);
             lastEvaluatedPlayerY.remove(viewerUUID);
+            pendingHideBelowYUpdates.remove(viewerUUID);
         }
     }
 
@@ -132,8 +136,6 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
         boolean sectionChecksEnabled = chunkSectionConfig.enabled();
         playerData.blockView().applyTileEntityCheckMode(tileChecksEnabled, currentTick);
         playerData.blockView().applyChunkSectionCheckMode(sectionChecksEnabled, currentTick);
-
-        checkHideBelowYMovement(event.getUser(), playerData, world, playerData.blockView());
 
         handleBlockPackets(event, event.getUser(), viewerUUID, playerData, world, currentTick, tileChecksEnabled, sectionChecksEnabled);
 
@@ -528,11 +530,17 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
         }
         int oldCutoffSection = (int) Math.floor(lastY) >> 4;
         int newCutoffSection = (int) Math.floor(currentY) >> 4;
-        if (oldCutoffSection != newCutoffSection || Math.abs(lastY - currentY) >= 4.0) {
+        boolean thresholdReached = oldCutoffSection != newCutoffSection || Math.abs(lastY - currentY) >= 8.0;
+
+        if (thresholdReached) {
             double prevY = lastY;
             lastEvaluatedPlayerY.put(viewerUUID, currentY);
             Long2ObjectOpenHashMap<CachedWireColumn> wireColumns = wireColumnsByViewer.get(viewerUUID);
             if (wireColumns != null && !wireColumns.isEmpty()) {
+                int pChunkX = (int) Math.floor(ownLocation.x()) >> 4;
+                int pChunkZ = (int) Math.floor(ownLocation.z()) >> 4;
+                Long2ObjectOpenHashMap<CachedWireColumn> pendingMap = pendingHideBelowYUpdates.computeIfAbsent(viewerUUID, k -> new Long2ObjectOpenHashMap<>());
+
                 for (CachedWireColumn cached : wireColumns.values()) {
                     int minSec = cached.minimumSectionY();
                     int secCount = cached.sectionCount();
@@ -549,10 +557,55 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
                         }
                     }
                     if (columnChanged) {
-                        sendColumnVisibilityUpdate(viewer, blockView, world, cached);
+                        int dx = cached.chunkX() - pChunkX;
+                        int dz = cached.chunkZ() - pChunkZ;
+                        int distSq = dx * dx + dz * dz;
+                        long chunkKey = (((long) cached.chunkX()) << 32) | (cached.chunkZ() & 0xFFFFFFFFL);
+                        if (distSq <= IMMEDIATE_INNER_RADIUS_SQ) {
+                            sendColumnVisibilityUpdate(viewer, blockView, world, cached);
+                            pendingMap.remove(chunkKey);
+                        } else {
+                            pendingMap.put(chunkKey, cached);
+                        }
                     }
                 }
             }
+        }
+
+        flushPendingHideBelowYChunkUpdates(viewer, playerData, world, blockView);
+    }
+
+    private void flushPendingHideBelowYChunkUpdates(User viewer, PlayerData playerData, UUID world, BlockView blockView) {
+        UUID viewerUUID = playerData.getPlayerUUID();
+        Long2ObjectOpenHashMap<CachedWireColumn> pendingMap = pendingHideBelowYUpdates.get(viewerUUID);
+        if (pendingMap == null || pendingMap.isEmpty()) {
+            return;
+        }
+        Locatable loc = playerData.ownLocation();
+        if (loc == null) {
+            return;
+        }
+        int pChunkX = (int) Math.floor(loc.x()) >> 4;
+        int pChunkZ = (int) Math.floor(loc.z()) >> 4;
+
+        List<CachedWireColumn> pendingList = new ArrayList<>(pendingMap.values());
+        pendingList.sort((c1, c2) -> {
+            int dx1 = c1.chunkX() - pChunkX;
+            int dz1 = c1.chunkZ() - pChunkZ;
+            int dx2 = c2.chunkX() - pChunkX;
+            int dz2 = c2.chunkZ() - pChunkZ;
+            return Integer.compare(dx1 * dx1 + dz1 * dz1, dx2 * dx2 + dz2 * dz2);
+        });
+
+        int toSend = Math.min(MAX_OUTER_CHUNKS_PER_FLUSH, pendingList.size());
+        for (int i = 0; i < toSend; i++) {
+            CachedWireColumn cached = pendingList.get(i);
+            long chunkKey = (((long) cached.chunkX()) << 32) | (cached.chunkZ() & 0xFFFFFFFFL);
+            pendingMap.remove(chunkKey);
+            sendColumnVisibilityUpdate(viewer, blockView, world, cached);
+        }
+        if (pendingMap.isEmpty()) {
+            pendingHideBelowYUpdates.remove(viewerUUID);
         }
     }
 

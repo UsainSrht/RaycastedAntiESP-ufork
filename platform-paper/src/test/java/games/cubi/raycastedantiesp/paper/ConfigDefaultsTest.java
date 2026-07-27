@@ -72,10 +72,10 @@ class ConfigDefaultsTest {
         assertTrue(manager.getChunkSectionConfig().hideAsAir());
         assertEquals(2, manager.getDebugConfig().chunkSectionDebugVerticalDown());
         assertTrue(manager.getHideBelowYConfig().enabled());
-        assertEquals(60, manager.getHideBelowYConfig().yCutoff());
-        assertEquals(64, manager.getHideBelowYConfig().playerYTrigger());
-        assertEquals(48, manager.getHideBelowYConfig().verticalDistanceBelowPlayer());
-        assertEquals(48, manager.getHideBelowYConfig().verticalDistanceAbovePlayer());
+        assertEquals(32, manager.getHideBelowYConfig().yCutoff());
+        assertEquals(36, manager.getHideBelowYConfig().playerYTrigger());
+        assertEquals(32, manager.getHideBelowYConfig().verticalDistanceBelowPlayer());
+        assertEquals(32, manager.getHideBelowYConfig().verticalDistanceAbovePlayer());
         assertEquals(8, manager.getHideBelowYConfig().unhideBuffer());
     }
 
