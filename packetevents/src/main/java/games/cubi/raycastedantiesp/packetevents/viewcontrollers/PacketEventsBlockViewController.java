@@ -530,7 +530,9 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
         }
         int oldCutoffSection = (int) Math.floor(lastY) >> 4;
         int newCutoffSection = (int) Math.floor(currentY) >> 4;
-        boolean thresholdReached = oldCutoffSection != newCutoffSection || Math.abs(lastY - currentY) >= 8.0;
+        boolean crossedCutoff = hideBelowYConfig != null && ((lastY >= hideBelowYConfig.yCutoff()) != (currentY >= hideBelowYConfig.yCutoff()));
+        boolean crossedTrigger = hideBelowYConfig != null && ((lastY >= hideBelowYConfig.playerYTrigger()) != (currentY >= hideBelowYConfig.playerYTrigger()));
+        boolean thresholdReached = oldCutoffSection != newCutoffSection || crossedCutoff || crossedTrigger || Math.abs(lastY - currentY) >= 8.0;
 
         if (thresholdReached) {
             double prevY = lastY;

@@ -121,4 +121,40 @@ class HideBelowYConfigTest {
         // Player on surface at Y=65 (>= yCutoff 60) -> verticalDistanceAbovePlayer does NOT apply
         assertFalse(config.shouldAutoHideBlock(65, 120));
     }
+
+    @Test
+    void testDefaultCutoffGapFixed() throws SerializationException {
+        ConfigurationNode node = BasicConfigurationNode.root();
+        node.node("enabled").set(true);
+        node.node("y-cutoff").set(32);
+        node.node("player-y-trigger").set(36);
+        node.node("vertical-distance-below-player").set(32);
+        node.node("vertical-distance-above-player").set(32);
+        node.node("unhide-buffer").set(8);
+
+        HideBelowYConfig config = HideBelowYConfig.load(node, "checks.hide-below-y");
+
+        // Player high at Y=80 (80 - 32 - 8 = 40 >= 32): Subterranean section 1 (16..31) and blocks < 32 are hidden
+        assertTrue(config.shouldAutoHideBlock(80, 30));
+        assertTrue(config.shouldAutoHideSection(80, 1));
+
+        // Player descending to Y=60 (60 - 32 - 8 = 20 < 32): Section 1 (16..31) dynamically loads!
+        assertFalse(config.shouldAutoHideSection(60, 1));
+        assertFalse(config.shouldAutoHideBlock(60, 30));
+
+        // Player standing at Y=33 (close to yCutoff=32): Section 1 and blocks near 32 are fully visible
+        assertFalse(config.shouldAutoHideSection(33, 1));
+        assertFalse(config.shouldAutoHideBlock(33, 30));
+        assertFalse(config.shouldAutoHideBlock(33, 28));
+
+        // Player descends to Y=30 (below yCutoff=32)
+        assertFalse(config.shouldAutoHideSection(30, 1));
+        assertFalse(config.shouldAutoHideBlock(30, 30));
+        assertFalse(config.shouldAutoHideBlock(30, 28));
+        assertFalse(config.shouldAutoHideBlock(30, 26));
+
+        // Player at Y=20 -> Section 1 and blocks 20..30 not hidden
+        assertFalse(config.shouldAutoHideSection(20, 1));
+        assertFalse(config.shouldAutoHideBlock(20, 20));
+    }
 }

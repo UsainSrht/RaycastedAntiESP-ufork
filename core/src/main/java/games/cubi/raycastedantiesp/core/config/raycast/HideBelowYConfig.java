@@ -56,17 +56,18 @@ public record HideBelowYConfig(
         int sectionMinY = sectionY << 4;
         int sectionMaxY = sectionMinY + 15;
 
-        // Absolute Y cutoff condition: if player is at/above trigger Y (with buffer), hide sections whose top is below yCutoff
-        if (playerY >= (playerYTrigger - unhideBuffer) && sectionMaxY < yCutoff) {
-            return true;
+        // Subterranean section hiding (sections whose top is below yCutoff):
+        if (sectionMaxY < yCutoff) {
+            if (verticalDistanceBelowPlayer > 0) {
+                if (sectionMaxY < (playerY - verticalDistanceBelowPlayer - unhideBuffer)) {
+                    return true;
+                }
+            } else if (playerY >= yCutoff && playerY >= playerYTrigger) {
+                return true;
+            }
         }
-        // Relative distance below player: hide sections deeper than verticalDistanceBelowPlayer below playerY (only below yCutoff)
-        if (verticalDistanceBelowPlayer > 0
-                && sectionMaxY < yCutoff
-                && sectionMaxY < (playerY - verticalDistanceBelowPlayer - unhideBuffer)) {
-            return true;
-        }
-        // Relative distance above player: hide sections higher than verticalDistanceAbovePlayer above playerY (only when player is below yCutoff)
+
+        // Relative height above player (sections higher than player when player is below yCutoff):
         if (verticalDistanceAbovePlayer > 0
                 && playerY < yCutoff
                 && sectionMinY > (playerY + verticalDistanceAbovePlayer + unhideBuffer)) {
@@ -82,17 +83,18 @@ public record HideBelowYConfig(
         if (!enabled) {
             return false;
         }
-        // Absolute Y cutoff condition: if player is at/above trigger Y (with buffer), hide blocks below yCutoff
-        if (playerY >= (playerYTrigger - unhideBuffer) && blockY < yCutoff) {
-            return true;
+        // Subterranean block hiding (blocks below yCutoff):
+        if (blockY < yCutoff) {
+            if (verticalDistanceBelowPlayer > 0) {
+                if (blockY < (playerY - verticalDistanceBelowPlayer - unhideBuffer)) {
+                    return true;
+                }
+            } else if (playerY >= yCutoff && playerY >= playerYTrigger) {
+                return true;
+            }
         }
-        // Relative distance below player: hide blocks deeper than verticalDistanceBelowPlayer below playerY (only below yCutoff)
-        if (verticalDistanceBelowPlayer > 0
-                && blockY < yCutoff
-                && blockY < (playerY - verticalDistanceBelowPlayer - unhideBuffer)) {
-            return true;
-        }
-        // Relative distance above player: hide sections higher than verticalDistanceAbovePlayer above playerY (only when player is below yCutoff)
+
+        // Relative height above player (blocks higher than player when player is below yCutoff):
         if (verticalDistanceAbovePlayer > 0
                 && playerY < yCutoff
                 && blockY > (playerY + verticalDistanceAbovePlayer + unhideBuffer)) {
