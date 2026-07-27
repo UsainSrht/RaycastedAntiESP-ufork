@@ -123,38 +123,31 @@ class HideBelowYConfigTest {
     }
 
     @Test
-    void testDefaultCutoffGapFixed() throws SerializationException {
+    void testSurfaceModeVsCaveModeWithLargeVerticalDistance() throws SerializationException {
         ConfigurationNode node = BasicConfigurationNode.root();
         node.node("enabled").set(true);
         node.node("y-cutoff").set(32);
         node.node("player-y-trigger").set(36);
-        node.node("vertical-distance-below-player").set(32);
-        node.node("vertical-distance-above-player").set(32);
+        node.node("vertical-distance-below-player").set(78);
+        node.node("vertical-distance-above-player").set(78);
         node.node("unhide-buffer").set(8);
 
         HideBelowYConfig config = HideBelowYConfig.load(node, "checks.hide-below-y");
 
-        // Player high at Y=80 (80 - 32 - 8 = 40 >= 32): Subterranean section 1 (16..31) and blocks < 32 are hidden
-        assertTrue(config.shouldAutoHideBlock(80, 30));
-        assertTrue(config.shouldAutoHideSection(80, 1));
+        // Surface Mode: Player at Y=63 (>= trigger Y 36) -> blocks < 32 (including Y=-32 and Y=30) MUST BE HIDDEN
+        assertTrue(config.shouldAutoHideBlock(63, 30));
+        assertTrue(config.shouldAutoHideBlock(63, -32));
+        assertTrue(config.shouldAutoHideSection(63, 1));
+        assertTrue(config.shouldAutoHideSection(63, -2));
 
-        // Player descending to Y=60 (60 - 32 - 8 = 20 < 32): Section 1 (16..31) dynamically loads!
-        assertFalse(config.shouldAutoHideSection(60, 1));
-        assertFalse(config.shouldAutoHideBlock(60, 30));
+        // Cave Mode: Player drops below trigger Y=36 (e.g. at Y=35 or Y=20)
+        // Relative distance (78 blocks) takes effect so deep cave floors and ceilings are fully loaded!
+        assertFalse(config.shouldAutoHideSection(35, 1));
+        assertFalse(config.shouldAutoHideBlock(35, 30));
+        assertFalse(config.shouldAutoHideBlock(35, -32)); // 35 - 78 - 8 = -51 < -32 -> NOT hidden!
 
-        // Player standing at Y=33 (close to yCutoff=32): Section 1 and blocks near 32 are fully visible
-        assertFalse(config.shouldAutoHideSection(33, 1));
-        assertFalse(config.shouldAutoHideBlock(33, 30));
-        assertFalse(config.shouldAutoHideBlock(33, 28));
-
-        // Player descends to Y=30 (below yCutoff=32)
-        assertFalse(config.shouldAutoHideSection(30, 1));
-        assertFalse(config.shouldAutoHideBlock(30, 30));
-        assertFalse(config.shouldAutoHideBlock(30, 28));
-        assertFalse(config.shouldAutoHideBlock(30, 26));
-
-        // Player at Y=20 -> Section 1 and blocks 20..30 not hidden
-        assertFalse(config.shouldAutoHideSection(20, 1));
-        assertFalse(config.shouldAutoHideBlock(20, 20));
+        // Deep cave player at Y=20 -> blocks down to Y = 20 - 78 - 8 = -66 are NOT hidden
+        assertFalse(config.shouldAutoHideBlock(20, -32));
+        assertFalse(config.shouldAutoHideBlock(20, -50));
     }
 }

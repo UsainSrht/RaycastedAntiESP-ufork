@@ -56,15 +56,16 @@ public record HideBelowYConfig(
         int sectionMinY = sectionY << 4;
         int sectionMaxY = sectionMinY + 15;
 
-        // Subterranean section hiding (sections whose top is below yCutoff):
-        if (sectionMaxY < yCutoff) {
-            if (verticalDistanceBelowPlayer > 0) {
-                if (sectionMaxY < (playerY - verticalDistanceBelowPlayer - unhideBuffer)) {
-                    return true;
-                }
-            } else if (playerY >= yCutoff && playerY >= playerYTrigger) {
-                return true;
-            }
+        // Surface Mode: if player is on the surface (at/above trigger Y and at/above yCutoff), hide all subterranean sections below yCutoff
+        if (playerY >= yCutoff && playerY >= playerYTrigger && sectionMaxY < yCutoff) {
+            return true;
+        }
+
+        // Subterranean / Cave Mode (player is below playerYTrigger): hide sections deeper than verticalDistanceBelowPlayer below playerY
+        if (verticalDistanceBelowPlayer > 0
+                && sectionMaxY < yCutoff
+                && sectionMaxY < (playerY - verticalDistanceBelowPlayer - unhideBuffer)) {
+            return true;
         }
 
         // Relative height above player (sections higher than player when player is below yCutoff):
@@ -83,15 +84,16 @@ public record HideBelowYConfig(
         if (!enabled) {
             return false;
         }
-        // Subterranean block hiding (blocks below yCutoff):
-        if (blockY < yCutoff) {
-            if (verticalDistanceBelowPlayer > 0) {
-                if (blockY < (playerY - verticalDistanceBelowPlayer - unhideBuffer)) {
-                    return true;
-                }
-            } else if (playerY >= yCutoff && playerY >= playerYTrigger) {
-                return true;
-            }
+        // Surface Mode: if player is on the surface (at/above trigger Y and at/above yCutoff), hide all subterranean blocks below yCutoff
+        if (playerY >= yCutoff && playerY >= playerYTrigger && blockY < yCutoff) {
+            return true;
+        }
+
+        // Subterranean / Cave Mode (player is below playerYTrigger): hide blocks deeper than verticalDistanceBelowPlayer below playerY
+        if (verticalDistanceBelowPlayer > 0
+                && blockY < yCutoff
+                && blockY < (playerY - verticalDistanceBelowPlayer - unhideBuffer)) {
+            return true;
         }
 
         // Relative height above player (blocks higher than player when player is below yCutoff):
