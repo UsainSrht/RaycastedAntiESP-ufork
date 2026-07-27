@@ -72,36 +72,9 @@ public class RaycastedAntiESPCommand {
         sender.sendRichMessage("<green>/raycastedantiesp set <key> <value> <gray>- Sets a config value");
         sender.sendRichMessage("<green>/raycastedantiesp add <key> <value> <gray>- Adds a value to a list config");
         sender.sendRichMessage("<green>/raycastedantiesp remove <key> <value> <gray>- Removes a value from a list config");
-        sender.sendRichMessage("<green>/raycastedantiesp debug-chunk-sections <gray>- Toggle chunk-section raycast particles (you only)");
         sender.sendRichMessage("<green>/raycastedantiesp test chunk-section <x> <y> <z> [player] <gray>- Test LOS to a section (block xyz)");
         sender.sendRichMessage("<green>/raycastedantiesp test status-chunk-section [player] <gray>- Snapshot chunk-section show/hide + raycast stats");
         sender.sendRichMessage(Attribution.attributionCommandDescription); //Using constant from Attribution class to ensure that it cannot be deleted without the developer noticing that they are obligated to replace it with an equivalent notice.
-    }
-
-    @Executes("debug-chunk-sections")
-    void debugChunkSectionsCommand(CommandSender sender) {
-        if (!(sender instanceof Player player)) {
-            sender.sendRichMessage("<red>[RaycastedAntiESP] This command can only be used in-game.");
-            return;
-        }
-        PlayerData data = PlayerRegistry.getInstance().getPlayerData(player.getUniqueId());
-        if (data == null) {
-            sender.sendRichMessage("<red>[RaycastedAntiESP] Player data not loaded yet.");
-            return;
-        }
-        if (!ConfigManager.get().getChunkSectionConfig().enabled()) {
-            sender.sendRichMessage("<yellow>[RaycastedAntiESP] checks.chunk-section.enabled is false — enable it to see rays.");
-        }
-        boolean enabled = data.toggleChunkSectionRayDebug();
-        if (enabled) {
-            int debugDown = ConfigManager.get().getDebugConfig().chunkSectionDebugVerticalDown();
-            sender.sendRichMessage("<green>[RaycastedAntiESP] Chunk-section ray debug <white>ON <gray>(HIDE rays, closest first, every 5 ticks)");
-            sender.sendRichMessage("<gray>HIDE: <gold>orange path</gold> / <red>red occluder</red> / <light_purple>magenta sample");
-            sender.sendRichMessage("<gray>Skip sections > <white>" + debugDown + "<gray> below (debug.chunk-section-debug-vertical-down)");
-            sender.sendRichMessage("<gray>For one section: <white>/reo test chunk-section <x> <y> <z>");
-        } else {
-            sender.sendRichMessage("<red>[RaycastedAntiESP] Chunk-section ray debug <white>OFF");
-        }
     }
 
     @Executes("reload")

@@ -25,8 +25,6 @@ public class PlayerData {
     private final int joinTick;
     private volatile boolean hasBypassPermission;
     private volatile boolean connected;
-    /** Per-player visual debug for chunk-section LOS rays (in-game toggle). */
-    private volatile boolean chunkSectionRayDebug;
     /** Packed section key for focused debug rays, or {@link #NO_CHUNK_SECTION_DEBUG_TARGET}. */
     private volatile long chunkSectionRayDebugTarget = NO_CHUNK_SECTION_DEBUG_TARGET;
     private final ThreadSafeLocatable ownLocation;
@@ -187,25 +185,6 @@ public class PlayerData {
         this.hasBypassPermission = hasBypassPermission;
     } //todo: need to link up
 
-    public boolean chunkSectionRayDebug() {
-        return chunkSectionRayDebug;
-    }
-
-    public boolean toggleChunkSectionRayDebug() {
-        chunkSectionRayDebug = !chunkSectionRayDebug;
-        if (chunkSectionRayDebug) {
-            chunkSectionRayDebugTarget = NO_CHUNK_SECTION_DEBUG_TARGET;
-        }
-        return chunkSectionRayDebug;
-    }
-
-    public void setChunkSectionRayDebug(boolean enabled) {
-        this.chunkSectionRayDebug = enabled;
-        if (enabled) {
-            chunkSectionRayDebugTarget = NO_CHUNK_SECTION_DEBUG_TARGET;
-        }
-    }
-
     public long chunkSectionRayDebugTarget() {
         return chunkSectionRayDebugTarget;
     }
@@ -226,7 +205,6 @@ public class PlayerData {
             return false;
         }
         chunkSectionRayDebugTarget = key;
-        chunkSectionRayDebug = false;
         return true;
     }
 

@@ -72,7 +72,6 @@ class ConfigDefaultsTest {
         assertTrue(manager.getChunkSectionConfig().hideAsAir());
         assertTrue(manager.getChunkSectionConfig().directionalOcclusionCulling());
         assertEquals(1, manager.getChunkSectionConfig().preemptiveNeighborReveal());
-        assertEquals(2, manager.getDebugConfig().chunkSectionDebugVerticalDown());
         assertTrue(manager.getHideBelowYConfig().enabled());
         assertEquals(32, manager.getHideBelowYConfig().yCutoff());
         assertEquals(36, manager.getHideBelowYConfig().playerYTrigger());

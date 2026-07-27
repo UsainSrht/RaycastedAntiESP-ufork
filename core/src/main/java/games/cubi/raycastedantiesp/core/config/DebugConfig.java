@@ -6,16 +6,10 @@ import java.util.List;
 
 public record DebugConfig(byte infoLevel, List<String> infoExemptedClasses, byte warnLevel, List<String> warnExemptedClasses,
                           byte errorLevel, List<String> errorExemptedClasses, boolean debugParticles,
-                          int chunkSectionDebugVerticalDown, boolean timings) implements Config {
-
-    public static final int DEFAULT_CHUNK_SECTION_DEBUG_VERTICAL_DOWN = 2;
+                          boolean timings) implements Config {
 
     public static DebugConfig load(ConfigurationNode root) {
         ConfigurationNode node = ConfigReader.node(root, "debug");
-        ConfigurationNode sectionDebugDown = ConfigReader.node(node, "chunk-section-debug-vertical-down");
-        int chunkSectionDebugVerticalDown = sectionDebugDown.virtual()
-                ? DEFAULT_CHUNK_SECTION_DEBUG_VERTICAL_DOWN
-                : Math.max(0, ConfigReader.integer(sectionDebugDown, "debug.chunk-section-debug-vertical-down"));
         return new DebugConfig(
                 level(ConfigReader.node(node, "info-level"), "debug.info-level"),
                 ConfigReader.stringList(ConfigReader.node(node, "info-exempted-classes"), "debug.info-exempted-classes"),
@@ -24,7 +18,6 @@ public record DebugConfig(byte infoLevel, List<String> infoExemptedClasses, byte
                 level(ConfigReader.node(node, "error-level"), "debug.error-level"),
                 ConfigReader.stringList(ConfigReader.node(node, "error-exempted-classes"), "debug.error-exempted-classes"),
                 ConfigReader.bool(ConfigReader.node(node, "particles"), "debug.particles"),
-                chunkSectionDebugVerticalDown,
                 ConfigReader.bool(ConfigReader.node(node, "timings"), "debug.timings")
         );
     }
@@ -43,14 +36,6 @@ public record DebugConfig(byte infoLevel, List<String> infoExemptedClasses, byte
 
     public boolean showDebugParticles() {
         return debugParticles;
-    }
-
-    /**
-     * Max sections below the viewer that still get chunk-section ray debug particles.
-     * Sections deeper than this are skipped (default {@value #DEFAULT_CHUNK_SECTION_DEBUG_VERTICAL_DOWN}).
-     */
-    public int chunkSectionDebugVerticalDown() {
-        return chunkSectionDebugVerticalDown;
     }
 
     public boolean recordTimings() {

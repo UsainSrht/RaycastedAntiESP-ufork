@@ -9,33 +9,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class DebugConfigTest {
     @Test
-    void chunkSectionDebugVerticalDownDefaultsToTwo() throws SerializationException {
+    void debugConfigLoadsFromConfigNode() throws SerializationException {
         ConfigurationNode root = baseDebugNode();
 
         DebugConfig config = DebugConfig.load(root);
 
-        assertEquals(DebugConfig.DEFAULT_CHUNK_SECTION_DEBUG_VERTICAL_DOWN, config.chunkSectionDebugVerticalDown());
-        assertEquals(2, config.chunkSectionDebugVerticalDown());
-    }
-
-    @Test
-    void chunkSectionDebugVerticalDownLoadsFromConfig() throws SerializationException {
-        ConfigurationNode root = baseDebugNode();
-        root.node("debug", "chunk-section-debug-vertical-down").set(5);
-
-        DebugConfig config = DebugConfig.load(root);
-
-        assertEquals(5, config.chunkSectionDebugVerticalDown());
-    }
-
-    @Test
-    void chunkSectionDebugVerticalDownClampsNegativeToZero() throws SerializationException {
-        ConfigurationNode root = baseDebugNode();
-        root.node("debug", "chunk-section-debug-vertical-down").set(-3);
-
-        DebugConfig config = DebugConfig.load(root);
-
-        assertEquals(0, config.chunkSectionDebugVerticalDown());
+        assertEquals((byte) 5, config.getInfoLevel());
+        assertEquals((byte) 5, config.getWarnLevel());
+        assertEquals((byte) 5, config.getErrorLevel());
     }
 
     private static ConfigurationNode baseDebugNode() throws SerializationException {

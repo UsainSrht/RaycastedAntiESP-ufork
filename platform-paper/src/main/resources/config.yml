@@ -88,7 +88,4 @@ debug:
     error-level: 5
     error-exempted-classes:
     particles: false
-    # Chunk-section ray visuals are toggled in-game: /antiesp debug-chunk-sections (not this flag).
-    # Only paint HIDE rays for sections within this many section-Y steps below the viewer (deeper caves skipped).
-    chunk-section-debug-vertical-down: 2
     timings: false
