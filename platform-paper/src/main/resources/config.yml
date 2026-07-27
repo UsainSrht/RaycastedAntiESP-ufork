@@ -48,6 +48,10 @@ checks:
         # true = hidden sections sent as empty air (default).
         # false = stone/deepslate solid placeholder (avoids stuck white chunk-fade on some clients when revealed).
         hide-as-air: true
+        # Skip raycasting for sections positioned behind occluded/solid sections relative to viewer origin.
+        directional-occlusion-culling: true
+        # Preemptively reveal adjacent neighbor sections (1-layer shell) around visible sections to ensure flicker-free cornering. <=0 disables.
+        preemptive-neighbor-reveal: 1
     hide-below-y:
         enabled: true
         # Absolute Y coordinate below which subterranean sections/blocks are auto-hidden when viewer is on surface.

@@ -228,6 +228,94 @@ public final class ChunkSectionLosProbe {
     }
 
     /**
+     * Checks if all line-of-sight sample rays targeting section (chunkX, sectionY, chunkZ)
+     * traverse through at least one known occluded/solid section in occludedSections.
+     */
+    public static boolean isSectionOccludedByShadow(
+            Locatable eye,
+            int chunkX,
+            int sectionY,
+            int chunkZ,
+            LongOpenHashSet occludedSections
+    ) {
+        if (occludedSections == null || occludedSections.isEmpty()) {
+            return false;
+        }
+        int eyeChunkX = eye.blockX() >> 4;
+        int eyeSectionY = eye.blockY() >> 4;
+        int eyeChunkZ = eye.blockZ() >> 4;
+        if (eyeChunkX == chunkX && eyeSectionY == sectionY && eyeChunkZ == chunkZ) {
+            return false;
+        }
+
+        List<ImmutableSpatialImpl> samples = ChunkSectionVisibilityUtil.sampleFaceCentersForFacingFaces(
+                eye.x(), eye.y(), eye.z(), chunkX, sectionY, chunkZ
+        );
+        if (samples.isEmpty()) {
+            return false;
+        }
+
+        for (ImmutableSpatialImpl sample : samples) {
+            if (!rayTraversesOccludedSection(eye.x(), eye.y(), eye.z(), eyeChunkX, eyeSectionY, eyeChunkZ,
+                    sample.x(), sample.y(), sample.z(), chunkX, sectionY, chunkZ, occludedSections)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean rayTraversesOccludedSection(
+            double eyeX, double eyeY, double eyeZ,
+            int eyeChunkX, int eyeSectionY, int eyeChunkZ,
+            double targetX, double targetY, double targetZ,
+            int targetChunkX, int targetSectionY, int targetChunkZ,
+            LongOpenHashSet occludedSections
+    ) {
+        double dx = targetX - eyeX;
+        double dy = targetY - eyeY;
+        double dz = targetZ - eyeZ;
+        double distSq = dx * dx + dy * dy + dz * dz;
+        if (distSq < 1e-4) {
+            return false;
+        }
+        double dist = Math.sqrt(distSq);
+        int steps = Math.max(1, (int) Math.ceil(dist / 8.0));
+        double stepX = dx / steps;
+        double stepY = dy / steps;
+        double stepZ = dz / steps;
+
+        double curX = eyeX + stepX;
+        double curY = eyeY + stepY;
+        double curZ = eyeZ + stepZ;
+
+        for (int i = 1; i < steps; i++) {
+            int sx = (int) Math.floor(curX) >> 4;
+            int sy = (int) Math.floor(curY) >> 4;
+            int sz = (int) Math.floor(curZ) >> 4;
+
+            if (sx == targetChunkX && sy == targetSectionY && sz == targetChunkZ) {
+                break;
+            }
+            if (sx == eyeChunkX && sy == eyeSectionY && sz == eyeChunkZ) {
+                curX += stepX;
+                curY += stepY;
+                curZ += stepZ;
+                continue;
+            }
+
+            long key = ChunkSectionStore.packChunkCoords(sx, sy, sz);
+            if (occludedSections.contains(key)) {
+                return true;
+            }
+
+            curX += stepX;
+            curY += stepY;
+            curZ += stepZ;
+        }
+        return false;
+    }
+
+    /**
      * Paints LOS sample rays for one section (centers + closest-on-face). Successful rays use SHOW colours.
      */
     public static void paintSectionDebugRays(

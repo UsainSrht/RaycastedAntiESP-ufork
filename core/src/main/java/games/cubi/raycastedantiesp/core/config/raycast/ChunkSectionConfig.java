@@ -15,7 +15,9 @@ public record ChunkSectionConfig(
         int hiddenRecheckIntervalTicks,
         int hideDelayTicks,
         boolean neighborPadding,
-        boolean hideAsAir
+        boolean hideAsAir,
+        boolean directionalOcclusionCulling,
+        int preemptiveNeighborReveal
 ) implements Config {
     public static ChunkSectionConfig load(ConfigurationNode node, String path) {
         ConfigurationNode downNode = node.node("always-show-vertical-down");
@@ -23,6 +25,8 @@ public record ChunkSectionConfig(
         ConfigurationNode legacyVertical = node.node("always-show-vertical-sections");
         ConfigurationNode hideAsAirNode = node.node("hide-as-air");
         ConfigurationNode hiddenRecheckNode = node.node("hidden-recheck-interval-ticks");
+        ConfigurationNode directionalNode = node.node("directional-occlusion-culling");
+        ConfigurationNode preemptiveNode = node.node("preemptive-neighbor-reveal");
 
         int down;
         if (!downNode.virtual()) {
@@ -52,6 +56,13 @@ public record ChunkSectionConfig(
                 ? 10
                 : ConfigReader.integer(hiddenRecheckNode, path + ".hidden-recheck-interval-ticks");
 
+        boolean directionalOcclusionCulling = directionalNode.virtual()
+                || ConfigReader.bool(directionalNode, path + ".directional-occlusion-culling");
+
+        int preemptiveNeighborReveal = preemptiveNode.virtual()
+                ? 1
+                : ConfigReader.integer(preemptiveNode, path + ".preemptive-neighbor-reveal");
+
         return new ChunkSectionConfig(
                 ConfigReader.bool(ConfigReader.node(node, "enabled"), path + ".enabled"),
                 ConfigReader.integer(ConfigReader.node(node, "max-occluding-count"), path + ".max-occluding-count"),
@@ -63,7 +74,9 @@ public record ChunkSectionConfig(
                 hiddenRecheck,
                 ConfigReader.integer(ConfigReader.node(node, "hide-delay-ticks"), path + ".hide-delay-ticks"),
                 ConfigReader.bool(ConfigReader.node(node, "neighbor-padding"), path + ".neighbor-padding"),
-                hideAsAir
+                hideAsAir,
+                directionalOcclusionCulling,
+                preemptiveNeighborReveal
         );
     }
 

@@ -24,6 +24,8 @@ class ChunkSectionConfigTest {
         assertEquals(3, config.hideDelayTicks());
         assertTrue(config.neighborPadding());
         assertTrue(config.hideAsAir());
+        assertTrue(config.directionalOcclusionCulling());
+        assertEquals(1, config.preemptiveNeighborReveal());
     }
 
     @Test

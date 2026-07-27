@@ -4,10 +4,12 @@ import games.cubi.locatables.api.Locatable;
 import games.cubi.raycastedantiesp.core.config.raycast.ChunkSectionConfig;
 import games.cubi.raycastedantiesp.core.tracked.TrackedChunkSection;
 import games.cubi.raycastedantiesp.core.view.BlockView;
+import games.cubi.raycastedantiesp.core.view.chunks.ChunkSectionStore;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -94,7 +96,26 @@ public final class ChunkSectionStatusReport {
         LongOpenHashSet frontier = new LongOpenHashSet();
         ChunkSectionLosProbe.collectFrontierFromEye(eye, config.raycastRadiusChunks(), blockView, reachable, frontier);
 
-        blockView.forEachTrackedChunkSection(section -> {
+        List<TrackedChunkSection> sectionsToEvaluate = new ArrayList<>();
+        blockView.forEachTrackedChunkSection(sectionsToEvaluate::add);
+
+        if (config.directionalOcclusionCulling()) {
+            int eyeChunkX = eye.blockX() >> 4;
+            int eyeSectionY = eye.blockY() >> 4;
+            int eyeChunkZ = eye.blockZ() >> 4;
+            sectionsToEvaluate.sort(Comparator.comparingInt(section ->
+                    ChunkSectionVisibilityUtil.chebyshevSectionDistance(
+                            eyeChunkX, eyeSectionY, eyeChunkZ,
+                            section.chunkX(), section.sectionY(), section.chunkZ()
+                    )
+            ));
+        }
+
+        LongOpenHashSet occludedSections = config.directionalOcclusionCulling()
+                ? new LongOpenHashSet()
+                : null;
+
+        for (TrackedChunkSection section : sectionsToEvaluate) {
             total[0]++;
             if (section.visible()) {
                 shown[0]++;
@@ -102,34 +123,53 @@ public final class ChunkSectionStatusReport {
                 hidden[0]++;
             }
 
+            long key = ChunkSectionStore.packChunkCoords(section.chunkX(), section.sectionY(), section.chunkZ());
             ChunkSectionLosProbe.Decision decision = ChunkSectionLosProbe.evaluateSection(
                     eye, section.chunkX(), section.sectionY(), section.chunkZ(), config, blockView, reachable, frontier
             );
-            boolean raycastPerformed = !decision.eyeInside()
-                    && !decision.alwaysShow()
-                    && decision.withinRaycastRadius()
-                    && !decision.visGraphAutoHide();
-            if (raycastPerformed) {
-                raycastsCast[0]++;
-                if (decision.raycastLos()) {
-                    raycastsSucceeded[0]++;
-                } else {
-                    raycastsOccluded[0]++;
-                }
-            } else if (!decision.wouldShow()) {
-                skippedRaycastHide[0]++;
-            }
+            boolean shadowOccluded = decision.withinRaycastRadius()
+                    && occludedSections != null
+                    && ChunkSectionLosProbe.isSectionOccludedByShadow(
+                    eye, section.chunkX(), section.sectionY(), section.chunkZ(), occludedSections
+            );
 
-            if (!decision.wouldShow()) {
-                bump(hideReasons, hideReasonCode(decision, raycastPerformed));
-                for (String tag : connectivityTags(section)) {
-                    bump(hideReasons, tag);
+            if (shadowOccluded) {
+                skippedRaycastHide[0]++;
+                occludedSections.add(key);
+                bump(hideReasons, "DIRECTIONAL_SHADOW");
+            } else {
+                boolean raycastPerformed = !decision.eyeInside()
+                        && !decision.alwaysShow()
+                        && decision.withinRaycastRadius()
+                        && !decision.visGraphAutoHide();
+                if (raycastPerformed) {
+                    raycastsCast[0]++;
+                    if (decision.raycastLos()) {
+                        raycastsSucceeded[0]++;
+                    } else {
+                        raycastsOccluded[0]++;
+                        if (occludedSections != null) {
+                            occludedSections.add(key);
+                        }
+                    }
+                } else if (!decision.wouldShow()) {
+                    skippedRaycastHide[0]++;
+                    if (occludedSections != null && decision.withinRaycastRadius()) {
+                        occludedSections.add(key);
+                    }
                 }
-                if (decision.visGraphUnreachableBelow()) {
-                    bump(hideReasons, "VISGRAPH_UNREACHABLE_BELOW");
+
+                if (!decision.wouldShow()) {
+                    bump(hideReasons, hideReasonCode(decision, raycastPerformed));
+                    for (String tag : connectivityTags(section)) {
+                        bump(hideReasons, tag);
+                    }
+                    if (decision.visGraphUnreachableBelow()) {
+                        bump(hideReasons, "VISGRAPH_UNREACHABLE_BELOW");
+                    }
                 }
             }
-        });
+        }
 
         return new ChunkSectionStatusReport(
                 total[0],

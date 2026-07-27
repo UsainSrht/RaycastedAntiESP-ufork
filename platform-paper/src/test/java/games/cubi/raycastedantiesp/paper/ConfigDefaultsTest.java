@@ -70,6 +70,8 @@ class ConfigDefaultsTest {
         assertEquals(3, manager.getChunkSectionConfig().hideDelayTicks());
         assertTrue(manager.getChunkSectionConfig().neighborPadding());
         assertTrue(manager.getChunkSectionConfig().hideAsAir());
+        assertTrue(manager.getChunkSectionConfig().directionalOcclusionCulling());
+        assertEquals(1, manager.getChunkSectionConfig().preemptiveNeighborReveal());
         assertEquals(2, manager.getDebugConfig().chunkSectionDebugVerticalDown());
         assertTrue(manager.getHideBelowYConfig().enabled());
         assertEquals(32, manager.getHideBelowYConfig().yCutoff());

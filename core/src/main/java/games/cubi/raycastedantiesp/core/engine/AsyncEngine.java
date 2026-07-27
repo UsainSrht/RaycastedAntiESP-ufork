@@ -27,6 +27,7 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -543,7 +544,24 @@ public abstract class AsyncEngine implements Engine {
         List<TrackedChunkSection> debugHideCandidates = broadDebug && !focusedDebug && paintDebugThisTick
                 ? new ArrayList<>()
                 : null;
-        blockView.forEachTrackedChunkSection(section -> {
+
+        List<TrackedChunkSection> sectionsToEvaluate = new ArrayList<>();
+        blockView.forEachTrackedChunkSection(sectionsToEvaluate::add);
+
+        if (chunkSectionConfig.directionalOcclusionCulling()) {
+            sectionsToEvaluate.sort(Comparator.comparingInt(section ->
+                    ChunkSectionVisibilityUtil.chebyshevSectionDistance(
+                            viewerChunkX, viewerSectionY, viewerChunkZ,
+                            section.chunkX(), section.sectionY(), section.chunkZ()
+                    )
+            ));
+        }
+
+        LongOpenHashSet occludedSections = chunkSectionConfig.directionalOcclusionCulling()
+                ? new LongOpenHashSet()
+                : null;
+
+        for (TrackedChunkSection section : sectionsToEvaluate) {
             checked[0]++;
             int chebyshev = ChunkSectionVisibilityUtil.chebyshevSectionDistance(
                     viewerChunkX, viewerSectionY, viewerChunkZ,
@@ -551,15 +569,18 @@ public abstract class AsyncEngine implements Engine {
             );
             if (chebyshev > raycastRadius) {
                 timings.incrementSectionRadiusSkipped();
-                return;
+                continue;
             }
+            long key = ChunkSectionStore.packChunkCoords(section.chunkX(), section.sectionY(), section.chunkZ());
             if (hideBelowYConfig != null && hideBelowYConfig.enabled()
                     && hideBelowYConfig.shouldAutoHideSection(playerLocation.y(), section.sectionY())) {
                 timings.incrementSectionRadiusSkipped();
-                evaluatedThisTick.add(ChunkSectionStore.packChunkCoords(section.chunkX(), section.sectionY(), section.chunkZ()));
-                return;
+                evaluatedThisTick.add(key);
+                if (occludedSections != null) {
+                    occludedSections.add(key);
+                }
+                continue;
             }
-            long key = ChunkSectionStore.packChunkCoords(section.chunkX(), section.sectionY(), section.chunkZ());
             if (ChunkSectionVisibilityUtil.isWithinAlwaysShow(
                     viewerChunkX, viewerSectionY, viewerChunkZ,
                     section.chunkX(), section.sectionY(), section.chunkZ(),
@@ -567,7 +588,7 @@ public abstract class AsyncEngine implements Engine {
                     || ChunkSectionVisibilityUtil.isEyeInsideSection(playerLocation, section)) {
                 wantShow.add(key);
                 evaluatedThisTick.add(key);
-                return;
+                continue;
             }
 
             int lastChecked = section.lastChecked();
@@ -577,20 +598,36 @@ public abstract class AsyncEngine implements Engine {
                     && visibleRecheckTicks > 0
                     && currentTick - lastChecked < visibleRecheckTicks) {
                 wantShow.add(key);
-                return;
+                continue;
             }
             // Sticky HIDE: skip re-probing recently culled sections.
             if (!section.visible()
                     && lastChecked != TrackedChunkSection.NEVER_CHECKED
                     && hiddenRecheckTicks > 0
                     && currentTick - lastChecked < hiddenRecheckTicks) {
-                return;
+                if (occludedSections != null) {
+                    occludedSections.add(key);
+                }
+                continue;
             }
 
             // VisGraph frontier: reachable open paths + face-adjacent shell (SOLID rock faces).
             if (!frontier.contains(key)) {
                 evaluatedThisTick.add(key);
-                return;
+                if (occludedSections != null) {
+                    occludedSections.add(key);
+                }
+                continue;
+            }
+
+            if (occludedSections != null && ChunkSectionLosProbe.isSectionOccludedByShadow(
+                    playerLocation, section.chunkX(), section.sectionY(), section.chunkZ(), occludedSections)) {
+                evaluatedThisTick.add(key);
+                occludedSections.add(key);
+                if (debugHideCandidates != null && section.sectionY() >= viewerSectionY - debugVerticalDown) {
+                    debugHideCandidates.add(section);
+                }
+                continue;
             }
 
             evaluatedThisTick.add(key);
@@ -605,11 +642,16 @@ public abstract class AsyncEngine implements Engine {
                     blockView
             )) {
                 wantShow.add(key);
-            } else if (debugHideCandidates != null
-                    && section.sectionY() >= viewerSectionY - debugVerticalDown) {
-                debugHideCandidates.add(section);
+            } else {
+                if (occludedSections != null) {
+                    occludedSections.add(key);
+                }
+                if (debugHideCandidates != null
+                        && section.sectionY() >= viewerSectionY - debugVerticalDown) {
+                    debugHideCandidates.add(section);
+                }
             }
-        });
+        }
 
         if (focusedDebug && paintDebugThisTick) {
             long target = player.chunkSectionRayDebugTarget();
@@ -636,23 +678,26 @@ public abstract class AsyncEngine implements Engine {
             );
         }
 
+        int preemptiveReveal = chunkSectionConfig.preemptiveNeighborReveal();
         LongOpenHashSet clientShow = wantShow;
-        if (neighborPadding && !wantShow.isEmpty()) {
+        if ((neighborPadding || preemptiveReveal > 0) && !wantShow.isEmpty()) {
             clientShow = new LongOpenHashSet(wantShow);
-            // Only keep already-visible neighbors — do not force-SHOW new shells (packet/client storm).
+            int r = Math.max(preemptiveReveal > 0 ? preemptiveReveal : 0, neighborPadding ? 1 : 0);
             for (long key : wantShow) {
                 int cx = ChunkSectionStore.unpackChunkX(key);
                 int sy = ChunkSectionStore.unpackSectionY(key);
                 int cz = ChunkSectionStore.unpackChunkZ(key);
-                for (int dx = -1; dx <= 1; dx++) {
-                    for (int dy = -1; dy <= 1; dy++) {
-                        for (int dz = -1; dz <= 1; dz++) {
+                for (int dx = -r; dx <= r; dx++) {
+                    for (int dy = -r; dy <= r; dy++) {
+                        for (int dz = -r; dz <= r; dz++) {
                             if (dx == 0 && dy == 0 && dz == 0) {
                                 continue;
                             }
                             TrackedChunkSection neighbor = blockView.getTrackedChunkSection(world, cx + dx, sy + dy, cz + dz);
-                            if (neighbor != null && neighbor.visible()) {
-                                clientShow.add(ChunkSectionStore.packChunkCoords(cx + dx, sy + dy, cz + dz));
+                            if (neighbor != null) {
+                                if (preemptiveReveal > 0 || neighbor.visible()) {
+                                    clientShow.add(ChunkSectionStore.packChunkCoords(cx + dx, sy + dy, cz + dz));
+                                }
                             }
                         }
                     }
