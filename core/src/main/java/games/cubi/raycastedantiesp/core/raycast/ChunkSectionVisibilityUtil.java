@@ -3,6 +3,7 @@ package games.cubi.raycastedantiesp.core.raycast;
 import games.cubi.locatables.api.Spatial;
 import games.cubi.locatables.implementations.ImmutableSpatialImpl;
 import games.cubi.raycastedantiesp.core.chunks.ChunkData;
+import games.cubi.raycastedantiesp.core.config.raycast.HideBelowYConfig;
 import games.cubi.raycastedantiesp.core.tracked.TrackedChunkSection;
 
 import java.util.ArrayList;
@@ -57,6 +58,10 @@ public final class ChunkSectionVisibilityUtil {
         }
         int dy = sectionY - viewerSectionY;
         return dy >= -Math.max(0, alwaysShowVerticalDown) && dy <= Math.max(0, alwaysShowVerticalUp);
+    }
+
+    public static boolean isBelowYThreshold(double eyeY, int sectionY, HideBelowYConfig hideBelowYConfig) {
+        return hideBelowYConfig != null && hideBelowYConfig.shouldAutoHideSection(eyeY, sectionY);
     }
 
     /**

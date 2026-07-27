@@ -12,6 +12,7 @@ import games.cubi.locatables.api.Locatable;
 import games.cubi.logs.Logger;
 import games.cubi.raycastedantiesp.core.config.raycast.ChunkSectionConfig;
 import games.cubi.raycastedantiesp.core.config.raycast.EntityConfig;
+import games.cubi.raycastedantiesp.core.config.raycast.HideBelowYConfig;
 import games.cubi.raycastedantiesp.core.config.raycast.PlayerConfig;
 import games.cubi.raycastedantiesp.core.config.raycast.RaycastConfig;
 import games.cubi.raycastedantiesp.core.tracked.NettyEntity;
@@ -51,6 +52,7 @@ public abstract class PacketEntityViewController<P> {
     protected EntityConfig entityConfig = null;
     protected PlayerConfig playerConfig = null;
     protected ChunkSectionConfig chunkSectionConfig = null;
+    protected HideBelowYConfig hideBelowYConfig = null;
     protected double hideOnSpawnEntityDistanceSquared = 0;
     protected double hideOnSpawnPlayerDistanceSquared = 0;
 
@@ -605,18 +607,30 @@ public abstract class PacketEntityViewController<P> {
     }
 
     protected boolean isChunkSectionChecksEnabled() {
-        return chunkSectionConfig != null && chunkSectionConfig.enabled();
+        return (chunkSectionConfig != null && chunkSectionConfig.enabled())
+                || (hideBelowYConfig != null && hideBelowYConfig.enabled());
     }
 
-    /** Returns true when chunk-section checks are enabled and the entity's current section is client-hidden. */
+    /** Returns true when chunk-section or hide-below-y checks are enabled and the entity's current position is client-hidden. */
     protected boolean isInHiddenChunkSection(PlayerData playerData, NettyEntity<?,?> entity, UUID world) {
-        if (!isChunkSectionChecksEnabled() || playerData == null || entity == null || entity.isSelfEntity() || world == null) {
+        if (playerData == null || entity == null || entity.isSelfEntity() || world == null) {
             return false;
         }
-        int chunkX = floorDiv16(entity.x());
-        int sectionY = floorDiv16(entity.y());
-        int chunkZ = floorDiv16(entity.z());
-        return !playerData.blockView().isChunkSectionVisible(world, chunkX, sectionY, chunkZ);
+        Locatable ownLocation = playerData.ownLocation();
+        if (hideBelowYConfig != null && hideBelowYConfig.enabled() && ownLocation != null) {
+            if (hideBelowYConfig.shouldAutoHideBlock(ownLocation.y(), (int) Math.floor(entity.y()))) {
+                return true;
+            }
+        }
+        if (chunkSectionConfig != null && chunkSectionConfig.enabled()) {
+            int chunkX = floorDiv16(entity.x());
+            int sectionY = floorDiv16(entity.y());
+            int chunkZ = floorDiv16(entity.z());
+            if (!playerData.blockView().isChunkSectionVisible(world, chunkX, sectionY, chunkZ)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     protected static UUID viewerWorld(PlayerData playerData) {

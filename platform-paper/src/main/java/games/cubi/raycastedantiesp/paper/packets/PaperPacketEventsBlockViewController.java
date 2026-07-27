@@ -22,4 +22,24 @@ public class PaperPacketEventsBlockViewController extends PacketEventsBlockViewC
     protected int getHiddenBlockId(int blockY) {
         return blockY > 0 ? stoneBlockId : deepslateBlockId;
     }
+
+    @Override
+    protected com.github.retrooper.packetevents.protocol.player.User resolveUser(java.util.UUID viewerUUID) {
+        org.bukkit.entity.Player player = org.bukkit.Bukkit.getPlayer(viewerUUID);
+        if (player == null) {
+            return null;
+        }
+        return PacketEvents.getAPI().getPlayerManager().getUser(player);
+    }
+
+    @Override
+    protected void ensureOwnLocation(games.cubi.raycastedantiesp.core.players.PlayerData playerData, java.util.UUID viewerUUID) {
+        if (playerData != null && (playerData.ownLocation() == null || playerData.ownLocation().world() == null)) {
+            org.bukkit.entity.Player player = org.bukkit.Bukkit.getPlayer(viewerUUID);
+            if (player != null && player.isOnline() && player.getWorld() != null) {
+                org.bukkit.Location eyeLocation = player.getEyeLocation();
+                playerData.updateOwnLocation(eyeLocation.getWorld().getUID(), eyeLocation.getX(), eyeLocation.getY(), eyeLocation.getZ());
+            }
+        }
+    }
 }

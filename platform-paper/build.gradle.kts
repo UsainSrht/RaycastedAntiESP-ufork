@@ -160,6 +160,7 @@ tasks.shadowJar {
 }
 
 tasks.jar {
+    enabled = false
     archiveBaseName.set("Incorrectly-Compiled-Without-ShadowJar")
 }
 

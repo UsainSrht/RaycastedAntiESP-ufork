@@ -1,6 +1,7 @@
 package games.cubi.raycastedantiesp.packetevents.viewcontrollers.chunkparser;
 
 import com.github.retrooper.packetevents.protocol.nbt.NBTCompound;
+import com.github.retrooper.packetevents.protocol.world.chunk.BaseChunk;
 import com.github.retrooper.packetevents.protocol.world.chunk.HeightmapType;
 import com.github.retrooper.packetevents.protocol.world.chunk.LightData;
 import com.github.retrooper.packetevents.protocol.world.chunk.TileEntity;
@@ -14,6 +15,7 @@ public final class CachedWireColumn {
     private final int chunkZ;
     private final int minimumSectionY;
     private final DataPalette[] biomePalettes;
+    private final BaseChunk[] unhiddenSections;
     private final LightData lightData;
     private final NBTCompound heightMapsNbt;
     private final Map<HeightmapType, long[]> heightmapsMap;
@@ -29,10 +31,25 @@ public final class CachedWireColumn {
             Map<HeightmapType, long[]> heightmapsMap,
             TileEntity[] tileEntities
     ) {
+        this(chunkX, chunkZ, minimumSectionY, biomePalettes, null, lightData, heightMapsNbt, heightmapsMap, tileEntities);
+    }
+
+    public CachedWireColumn(
+            int chunkX,
+            int chunkZ,
+            int minimumSectionY,
+            DataPalette[] biomePalettes,
+            BaseChunk[] unhiddenSections,
+            LightData lightData,
+            NBTCompound heightMapsNbt,
+            Map<HeightmapType, long[]> heightmapsMap,
+            TileEntity[] tileEntities
+    ) {
         this.chunkX = chunkX;
         this.chunkZ = chunkZ;
         this.minimumSectionY = minimumSectionY;
         this.biomePalettes = biomePalettes;
+        this.unhiddenSections = unhiddenSections;
         this.lightData = lightData;
         this.heightMapsNbt = heightMapsNbt;
         this.heightmapsMap = heightmapsMap;
@@ -57,6 +74,10 @@ public final class CachedWireColumn {
 
     public DataPalette biomePalette(int sectionIndex) {
         return sectionIndex >= 0 && sectionIndex < biomePalettes.length ? biomePalettes[sectionIndex] : null;
+    }
+
+    public BaseChunk unhiddenSection(int sectionIndex) {
+        return unhiddenSections != null && sectionIndex >= 0 && sectionIndex < unhiddenSections.length ? unhiddenSections[sectionIndex] : null;
     }
 
     public LightData lightData() {

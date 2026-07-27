@@ -113,6 +113,10 @@ public abstract class PacketEventsEntityViewController extends PacketEntityViewC
             chunkSectionConfig = ConfigManager.get().getChunkSectionConfig();
         }
 
+        if (ConfigManager.get().getHideBelowYConfig() != hideBelowYConfig) {
+            hideBelowYConfig = ConfigManager.get().getHideBelowYConfig();
+        }
+
         UUID world = COMMON.resolvePacketWorld(playerData, event.getUser());
         int currentTick = CURRENT_TICK_SUPPLIER.getAsInt();
         currentViewer = event.getUser();
@@ -158,6 +162,9 @@ public abstract class PacketEventsEntityViewController extends PacketEntityViewC
     public void applyChunkSectionEntityGate(User viewer, PlayerData playerData, int chunkX, int sectionY, int chunkZ, boolean sectionVisible) {
         if (chunkSectionConfig == null) {
             chunkSectionConfig = ConfigManager.get().getChunkSectionConfig();
+        }
+        if (hideBelowYConfig == null) {
+            hideBelowYConfig = ConfigManager.get().getHideBelowYConfig();
         }
         if (entityConfig == null) {
             entityConfig = ConfigManager.get().getEntityConfig();

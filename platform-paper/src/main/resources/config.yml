@@ -48,6 +48,22 @@ checks:
         # true = hidden sections sent as empty air (default).
         # false = stone/deepslate solid placeholder (avoids stuck white chunk-fade on some clients when revealed).
         hide-as-air: true
+    hide-below-y:
+        enabled: true
+        # Absolute Y coordinate below which subterranean sections/blocks are auto-hidden when viewer is on surface.
+        y-cutoff: 60
+        # Player must be at or above this Y coordinate for the absolute y-cutoff to apply.
+        player-y-trigger: 64
+        # Relative depth below player (in blocks). Sections/blocks deeper than this distance below player Y are auto-hidden (only below y-cutoff).
+        vertical-distance-below-player: 48
+        # Relative height above player (in blocks). Sections/blocks higher than this distance above player Y are auto-hidden (only when player is below y-cutoff).
+        vertical-distance-above-player: 48
+        # Hysteresis buffer in blocks to prevent section flickering when crossing the cutoff boundary.
+        unhide-buffer: 8
+        # How often (in ticks) player Y-level section visibility is rechecked asynchronously. Default: 5 ticks.
+        recheck-interval-ticks: 5
+        # Trigger immediate section updates on player movement across section boundaries (Y delta >= 4.0 or section boundary). Default: true.
+        movement-trigger: true
 engine:
     mode: async
     async:

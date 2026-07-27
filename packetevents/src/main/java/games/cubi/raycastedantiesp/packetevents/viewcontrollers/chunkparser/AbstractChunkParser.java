@@ -68,7 +68,12 @@ abstract class AbstractChunkParser<D> implements ChunkParser {
         boolean mutatedSection = false;
 
         for (int sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
-            Chunk_v1_18 section = (Chunk_v1_18) sections[sectionIndex];
+            if (!(sections[sectionIndex] instanceof Chunk_v1_18 section)) {
+                continue;
+            }
+            if (sectionContext != null) {
+                sectionContext.recordUnhiddenSection(sectionIndex, section);
+            }
             int sectionY = minimumSectionY + sectionIndex;
             D data = parseSection(section);
             if (data == null) {
@@ -81,7 +86,9 @@ abstract class AbstractChunkParser<D> implements ChunkParser {
             if (sectionContext != null && data != null) {
                 boolean visibleIfNew = sectionContext.isWithinAlwaysShow(world, chunkX, sectionY, chunkZ);
                 TrackedChunkSection trackedSection = blockView.updateOrInsertChunkSection(world, chunkX, sectionY, chunkZ, visibleIfNew);
-                if (trackedSection != null && !trackedSection.visible()) {
+                boolean sectionHiddenByRaycast = sectionContext.sectionChecksEnabled() && trackedSection != null && !trackedSection.visible();
+                boolean sectionHiddenByY = sectionContext.shouldAutoHideSection(sectionY);
+                if (sectionHiddenByRaycast || sectionHiddenByY) {
                     hideSectionOnWire = true;
                     sectionHiddenOnWire[sectionIndex] = true;
                     sections[sectionIndex] = hiddenSectionKeepingBiomes(section, sectionY, sectionContext.hideAsAir());
@@ -123,9 +130,7 @@ abstract class AbstractChunkParser<D> implements ChunkParser {
                         if (!mutatePackets && !hideSectionOnWire) {
                             blockView.recordOutboundTileEntityVisibility(state, true);
                         } else if (state != null && !state.visible()) {
-                            if (!hideSectionOnWire) {
-                                // Wire section is still the live Chunk_v1_18 reference when not replaced.
-                                Chunk_v1_18 wireSection = (Chunk_v1_18) sections[sectionIndex];
+                            if (!hideSectionOnWire && sections[sectionIndex] instanceof Chunk_v1_18 wireSection) {
                                 wireSection.set(localX, localY, localZ, hiddenBlockID.applyAsInt(blockY));
                                 mutatedBlock = true;
                             }

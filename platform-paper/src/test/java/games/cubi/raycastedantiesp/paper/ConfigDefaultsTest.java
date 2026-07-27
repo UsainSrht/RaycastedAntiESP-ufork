@@ -60,17 +60,23 @@ class ConfigDefaultsTest {
                 () -> new ByteArrayInputStream(defaults), dataFolder, List.of());
 
         assertFalse(manager.getChunkSectionConfig().enabled());
-        assertEquals(6, manager.getChunkSectionConfig().raycastRadiusChunks());
-        assertEquals(4, manager.getChunkSectionConfig().alwaysShowRadiusChunks());
+        assertEquals(10, manager.getChunkSectionConfig().raycastRadiusChunks());
+        assertEquals(1, manager.getChunkSectionConfig().alwaysShowRadiusChunks());
         assertEquals(1, manager.getChunkSectionConfig().alwaysShowVerticalDown());
-        assertEquals(12, manager.getChunkSectionConfig().alwaysShowVerticalUp());
-        assertEquals(2, manager.getChunkSectionConfig().maxOccludingCount());
+        assertEquals(1, manager.getChunkSectionConfig().alwaysShowVerticalUp());
+        assertEquals(3, manager.getChunkSectionConfig().maxOccludingCount());
         assertEquals(5, manager.getChunkSectionConfig().visibleRecheckIntervalTicks());
         assertEquals(10, manager.getChunkSectionConfig().hiddenRecheckIntervalTicks());
         assertEquals(3, manager.getChunkSectionConfig().hideDelayTicks());
         assertTrue(manager.getChunkSectionConfig().neighborPadding());
         assertTrue(manager.getChunkSectionConfig().hideAsAir());
         assertEquals(2, manager.getDebugConfig().chunkSectionDebugVerticalDown());
+        assertTrue(manager.getHideBelowYConfig().enabled());
+        assertEquals(60, manager.getHideBelowYConfig().yCutoff());
+        assertEquals(64, manager.getHideBelowYConfig().playerYTrigger());
+        assertEquals(48, manager.getHideBelowYConfig().verticalDistanceBelowPlayer());
+        assertEquals(48, manager.getHideBelowYConfig().verticalDistanceAbovePlayer());
+        assertEquals(8, manager.getHideBelowYConfig().unhideBuffer());
     }
 
     @Test
@@ -78,11 +84,11 @@ class ConfigDefaultsTest {
         byte[] defaults = readDefaultConfig();
         String invalid = new String(defaults, StandardCharsets.UTF_8)
                 .replace("track-all-blocks: false", "track-all-blocks: false")
-                .replace("enabled: false\n        max-occluding-count: 2", "enabled: true\n        max-occluding-count: 2")
-                .replace("enabled: false\r\n        max-occluding-count: 2", "enabled: true\r\n        max-occluding-count: 2");
+                .replace("enabled: false\n        max-occluding-count: 3", "enabled: true\n        max-occluding-count: 3")
+                .replace("enabled: false\r\n        max-occluding-count: 3", "enabled: true\r\n        max-occluding-count: 3");
         assertTrue(invalid.contains("chunk-section:"), "precondition: chunk-section present");
-        assertTrue(invalid.contains("enabled: true\n        max-occluding-count: 2")
-                || invalid.contains("enabled: true\r\n        max-occluding-count: 2"), "precondition: section checks enabled");
+        assertTrue(invalid.contains("enabled: true\n        max-occluding-count: 3")
+                || invalid.contains("enabled: true\r\n        max-occluding-count: 3"), "precondition: section checks enabled");
         Files.writeString(dataFolder.resolve("config.yml"), invalid, StandardCharsets.UTF_8);
 
         ConfigLoadException thrown = assertThrows(ConfigLoadException.class, () ->

@@ -15,6 +15,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
@@ -42,6 +43,15 @@ public class EventListener extends PaperListener {
         }
         return instance;
     }
+
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onBukkitPlayerJoin(PlayerJoinEvent event) {
+        PlayerData playerData = PlayerRegistry.getInstance().getPlayerData(event.getPlayer().getUniqueId());
+        if (playerData != null) {
+            updateOwnLocation(playerData, event.getPlayer().getEyeLocation());
+        }
+    }
+
     @EventHandler(priority = EventPriority.LOWEST) //Runs first
     public void onPlayerJoin(PlayerClientLoadedWorldEvent e) {
         Player player = e.getPlayer();

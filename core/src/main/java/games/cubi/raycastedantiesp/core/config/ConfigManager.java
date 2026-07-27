@@ -4,6 +4,7 @@ import games.cubi.logs.Logger;
 import games.cubi.raycastedantiesp.core.config.engine.EngineConfig;
 import games.cubi.raycastedantiesp.core.config.raycast.ChunkSectionConfig;
 import games.cubi.raycastedantiesp.core.config.raycast.EntityConfig;
+import games.cubi.raycastedantiesp.core.config.raycast.HideBelowYConfig;
 import games.cubi.raycastedantiesp.core.config.raycast.PlayerConfig;
 import games.cubi.raycastedantiesp.core.config.raycast.SoundEffectsConfig;
 import games.cubi.raycastedantiesp.core.config.raycast.TileEntityConfig;
@@ -176,6 +177,10 @@ public class ConfigManager {
 
     public ChunkSectionConfig getChunkSectionConfig() {
         return activeConfig().checksConfig().chunkSectionConfig();
+    }
+
+    public HideBelowYConfig getHideBelowYConfig() {
+        return activeConfig().checksConfig().hideBelowYConfig();
     }
 
     public DebugConfig getDebugConfig() {

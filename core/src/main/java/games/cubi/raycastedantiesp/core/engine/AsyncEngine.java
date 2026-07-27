@@ -8,6 +8,7 @@ import games.cubi.raycastedantiesp.core.config.ConfigManager;
 import games.cubi.raycastedantiesp.core.config.DebugConfig;
 import games.cubi.raycastedantiesp.core.config.raycast.ChunkSectionConfig;
 import games.cubi.raycastedantiesp.core.config.raycast.EntityConfig;
+import games.cubi.raycastedantiesp.core.config.raycast.HideBelowYConfig;
 import games.cubi.raycastedantiesp.core.config.raycast.PlayerConfig;
 import games.cubi.raycastedantiesp.core.config.raycast.TileEntityConfig;
 import games.cubi.raycastedantiesp.core.tracked.NettyEntity;
@@ -30,6 +31,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 import java.util.function.IntSupplier;
 
 public abstract class AsyncEngine implements Engine {
@@ -54,12 +56,17 @@ public abstract class AsyncEngine implements Engine {
     private final AtomicLong tickNanos = new AtomicLong(0);
     private final AsyncRunner asyncRunner;
     private final TimingStatsSelector timingStatsSelector = new TimingStatsSelector();
+    private Consumer<PlayerData> hideBelowYRecheckListener = null;
 
     public AsyncEngine(ConfigManager config, ParticleSpawner particleSpawner, IntSupplier currentTickSupplier, AsyncRunner asyncRunner) {
         this.config = config;
         this.particleSpawner = particleSpawner;
         this.currentTickSupplier = currentTickSupplier;
         this.asyncRunner = asyncRunner;
+    }
+
+    public void setHideBelowYRecheckListener(Consumer<PlayerData> listener) {
+        this.hideBelowYRecheckListener = listener;
     }
 
     /**
@@ -399,15 +406,26 @@ public abstract class AsyncEngine implements Engine {
                 );
                 timings.finishChunkSectionSection(sectionStartNanos);
             }
+            HideBelowYConfig hideBelowYConfig = config.getHideBelowYConfig();
+            if (hideBelowYConfig != null && hideBelowYConfig.enabled() && hideBelowYRecheckListener != null) {
+                if (currentTick % hideBelowYConfig.recheckIntervalTicks() == 0) {
+                    hideBelowYRecheckListener.accept(playerData);
+                }
+            }
         }
     }
 
     private void checkEntities(PlayerData player, Locatable playerLocation, EntityConfig entityConfig, boolean debugParticles, BlockView blockView, int currentTick, int worldEpoch, TickTimingBatch timings) {
         EntityView<?> entityView = player.entityView();
+        HideBelowYConfig hideBelowYConfig = config.getHideBelowYConfig();
 
         int checked = entityView.forEachNeedingRecheckEntity(entityConfig.getVisibleRecheckIntervalTicks(), currentTick, !(timings instanceof TickTimingBatchNoOp), worldEpoch, entity -> {
             boolean wasVisible = entity.visible();
             if (attachedToSelf(player, entityView, entity, currentTick, worldEpoch)) {
+                return;
+            }
+            if (hideBelowYConfig != null && hideBelowYConfig.enabled() && hideBelowYConfig.shouldAutoHideBlock(playerLocation.y(), (int) Math.floor(entity.y()))) {
+                entityView.setVisibility(entity, false, currentTick, worldEpoch);
                 return;
             }
             ImmutableSpatial entityLocation = entity.getOffsetPosition();
@@ -428,10 +446,15 @@ public abstract class AsyncEngine implements Engine {
 
     private void checkPlayers(PlayerData player, Locatable playerLocation, PlayerConfig playerConfig, boolean debugParticles, BlockView blockView, int currentTick, int worldEpoch, TickTimingBatch timings) {
         EntityView<?> playerView = player.playerView();
+        HideBelowYConfig hideBelowYConfig = config.getHideBelowYConfig();
 
         int checked = playerView.forEachNeedingRecheckEntity(playerConfig.getVisibleRecheckIntervalTicks(), currentTick, !(timings instanceof TickTimingBatchNoOp), worldEpoch, otherPlayer -> {
             boolean wasVisible = otherPlayer.visible();
             if (attachedToSelf(player, playerView, otherPlayer, currentTick, worldEpoch)) {
+                return;
+            }
+            if (hideBelowYConfig != null && hideBelowYConfig.enabled() && hideBelowYConfig.shouldAutoHideBlock(playerLocation.y(), (int) Math.floor(otherPlayer.y()))) {
+                playerView.setVisibility(otherPlayer, false, currentTick, worldEpoch);
                 return;
             }
             ImmutableSpatial otherPlayerLocation = otherPlayer.getOffsetPosition();
@@ -463,8 +486,12 @@ public abstract class AsyncEngine implements Engine {
 
     private void checkTileEntities(PlayerData player, Locatable playerLocation, TileEntityConfig tileEntityConfig, boolean debugParticles, BlockView blockView, int currentTick, int worldEpoch, TickTimingBatch timings) {
         long modeToken = blockView.tileEntityCheckModeToken();
-        int checked = blockView.updateVisibilityForEachNeedingRecheck(tileEntityConfig.getVisibleRecheckIntervalTicks(), currentTick, modeToken, worldEpoch, tileEntityLocation -> {
+        HideBelowYConfig hideBelowYConfig = config.getHideBelowYConfig();
 
+        int checked = blockView.updateVisibilityForEachNeedingRecheck(tileEntityConfig.getVisibleRecheckIntervalTicks(), currentTick, modeToken, worldEpoch, tileEntityLocation -> {
+            if (hideBelowYConfig != null && hideBelowYConfig.enabled() && hideBelowYConfig.shouldAutoHideBlock(playerLocation.y(), tileEntityLocation.blockY())) {
+                return BlockView.VisibilityResolver.HIDE;
+            }
             if (playerLocation.distanceSquared(tileEntityLocation) > (double) tileEntityConfig.getRaycastRadius() * tileEntityConfig.getRaycastRadius()) {
                 timings.incrementTileRadiusSkipped();
                 return BlockView.VisibilityResolver.HIDE;
@@ -501,6 +528,8 @@ public abstract class AsyncEngine implements Engine {
 
         blockView.refreshDirtySectionVisConnectivity();
 
+        HideBelowYConfig hideBelowYConfig = config.getHideBelowYConfig();
+
         LongOpenHashSet reachable = new LongOpenHashSet();
         LongOpenHashSet frontier = new LongOpenHashSet();
         ChunkSectionLosProbe.collectFrontierFromEye(
@@ -522,6 +551,12 @@ public abstract class AsyncEngine implements Engine {
             );
             if (chebyshev > raycastRadius) {
                 timings.incrementSectionRadiusSkipped();
+                return;
+            }
+            if (hideBelowYConfig != null && hideBelowYConfig.enabled()
+                    && hideBelowYConfig.shouldAutoHideSection(playerLocation.y(), section.sectionY())) {
+                timings.incrementSectionRadiusSkipped();
+                evaluatedThisTick.add(ChunkSectionStore.packChunkCoords(section.chunkX(), section.sectionY(), section.chunkZ()));
                 return;
             }
             long key = ChunkSectionStore.packChunkCoords(section.chunkX(), section.sectionY(), section.chunkZ());
