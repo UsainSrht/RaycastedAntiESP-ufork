@@ -441,7 +441,8 @@ public abstract class AsyncEngine implements Engine {
             }
             if (chunkSectionConfig.enabled()) {
                 long sectionStartNanos = timings.startChunkSectionSection();
-                // Section ray visuals are per-player (focused target set via /reo test chunk-section), not global
+                // Section ray visuals are per-player (focused target set via /reo test
+                // chunk-section), not global
                 // debug.particles.
                 boolean focusedSectionDebug = playerData.hasChunkSectionRayDebugTarget();
                 checkChunkSections(
@@ -649,8 +650,9 @@ public abstract class AsyncEngine implements Engine {
             }
 
             int lastChecked = section.lastChecked();
-            // Sticky SHOW: avoid re-raycasting every tick (major server cost / client
-            // thrash source).
+            // Sticky SHOW: avoid re-raycasting every tick for confirmed visible sections.
+            // MUST only apply when hide desire is NOT active; otherwise pending hide-delay
+            // is perpetually reset.
             if (section.visible()
                     && lastChecked != TrackedChunkSection.NEVER_CHECKED
                     && visibleRecheckTicks > 0

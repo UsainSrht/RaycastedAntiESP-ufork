@@ -32,6 +32,7 @@ import games.cubi.raycastedantiesp.core.view.EntityView;
 import games.cubi.raycastedantiesp.paper.RaycastedAntiESP;
 import games.cubi.raycastedantiesp.paper.UpdateChecker;
 import games.cubi.raycastedantiesp.paper.packets.PacketEventsPaperBlockInfoResolver;
+import games.cubi.raycastedantiesp.packetevents.viewcontrollers.PacketEventsBlockViewController;
 
 import games.cubi.raycastedantiesp.paper.utils.PaperScheduler;
 import io.github.retrooper.packetevents.util.SpigotConversionUtil;
@@ -78,6 +79,7 @@ public class RaycastedAntiESPCommand {
         sender.sendRichMessage("<green>/raycastedantiesp add <key> <value> <gray>- Adds a value to a list config");
         sender.sendRichMessage("<green>/raycastedantiesp remove <key> <value> <gray>- Removes a value from a list config");
         sender.sendRichMessage("<green>/raycastedantiesp test chunk-section <x> <y> <z> [player] <gray>- Test LOS to a section (block xyz)");
+        sender.sendRichMessage("<green>/raycastedantiesp test show-chunk-section <x> <y> <z> [player] <gray>- Force show chunk section to client");
         sender.sendRichMessage("<green>/raycastedantiesp test status-chunk-section [player] <gray>- Snapshot chunk-section show/hide + raycast stats");
         sender.sendRichMessage(Attribution.attributionCommandDescription); //Using constant from Attribution class to ensure that it cannot be deleted without the developer noticing that they are obligated to replace it with an equivalent notice.
     }
@@ -230,6 +232,20 @@ public class RaycastedAntiESPCommand {
             testChunkSection(sender, target, x, y, z);
         }
 
+        @Executes("show-chunk-section")
+        void showChunkSectionSelf(int x, int y, int z, CommandSender sender) {
+            if (!(sender instanceof Player player)) {
+                sender.sendRichMessage("<red>[RaycastedAntiESP] Specify a player: /reo test show-chunk-section <x> <y> <z> <player>");
+                return;
+            }
+            showChunkSection(sender, player, x, y, z);
+        }
+
+        @Executes("show-chunk-section")
+        void showChunkSectionOther(int x, int y, int z, Player target, CommandSender sender) {
+            showChunkSection(sender, target, x, y, z);
+        }
+
         @Executes("status-chunk-section")
         void statusChunkSectionSelf(CommandSender sender) {
             if (!(sender instanceof Player player)) {
@@ -361,6 +377,36 @@ public class RaycastedAntiESPCommand {
                 reportChunkSectionLine(sender, "<gray>focused ray debug=</gray><red><bold>OFF</bold></red>");
             }
             reportChunkSectionLine(sender, "<gold>----- <yellow>end chunk-section LOS test</yellow> -----</gold>");
+        }
+
+        private void showChunkSection(CommandSender sender, Player viewer, int blockX, int blockY, int blockZ) {
+            PlayerData playerData = PlayerRegistry.getInstance().getPlayerData(viewer.getUniqueId());
+            if (playerData == null) {
+                reportChunkSectionLine(sender, "<red>Player data not loaded for " + describeViewer(viewer.getUniqueId()) + ".");
+                return;
+            }
+            Locatable eye = playerData.ownLocation();
+            if (eye == null || eye.world() == null) {
+                reportChunkSectionLine(sender, "<red>Viewer has no location yet.");
+                return;
+            }
+
+            int chunkX = blockX >> 4;
+            int sectionY = blockY >> 4;
+            int chunkZ = blockZ >> 4;
+
+            boolean success = PacketEventsBlockViewController.get().forceShowChunkSection(playerData, chunkX, sectionY, chunkZ);
+
+            reportChunkSectionLine(sender, "<gold>----- <yellow><bold>show-chunk-section</bold></yellow> -----</gold>");
+            reportChunkSectionLine(sender, "<gray>viewer=</gray><white>" + describeViewer(viewer.getUniqueId()) + "</white>");
+            reportChunkSectionLine(sender, "<gray>block=</gray><yellow>" + blockX + " " + blockY + " " + blockZ
+                    + "</yellow> <gray>→</gray> <gray>section=</gray><aqua>" + chunkX + " " + sectionY + " " + chunkZ + "</aqua>");
+            if (success) {
+                reportChunkSectionLine(sender, "<green>Force showed chunk section to client.</green>");
+            } else {
+                reportChunkSectionLine(sender, "<red>Failed to force show chunk section (wire column not cached or user offline).</red>");
+            }
+            reportChunkSectionLine(sender, "<gold>----- <yellow>end show-chunk-section</yellow> -----</gold>");
         }
 
         private static List<String> buildClientVisibleReasons(
@@ -675,6 +721,7 @@ public class RaycastedAntiESPCommand {
             sender.sendRichMessage("<green>/raycastedantiesp test benchmark <gray>- Benchmarks raycast speed by raycasting to 1000 random locatables around the player and printing the average time taken");
             sender.sendRichMessage("<green>/raycastedantiesp test loaded-chunks <gray>- Shows the number of chunks currently loaded in the player's block view");
             sender.sendRichMessage("<green>/raycastedantiesp test chunk-section <x> <y> <z> [player] <gray>- Test LOS to the section containing block xyz; toggles focused rays");
+            sender.sendRichMessage("<green>/raycastedantiesp test show-chunk-section <x> <y> <z> [player] <gray>- Force show section containing block xyz to client");
             sender.sendRichMessage("<green>/raycastedantiesp test status-chunk-section [player] <gray>- Snapshot shown/hidden sections, raycast outcomes, and hide-reason counts");
             sender.sendRichMessage("<green>/raycastedantiesp test entity-id <entity ID> [player] <gray>- Finds an entity by ID in one player's views, or in all player views when no player is supplied");
             sender.sendRichMessage("<green>/raycastedantiesp test entity-uuid <entity> <gray>- Shows Bukkit data and all tracked view data for a native entity selection or UUID");
