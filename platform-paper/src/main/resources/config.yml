@@ -57,7 +57,7 @@ checks:
         # Absolute Y coordinate below which subterranean sections/blocks are auto-hidden when viewer is on surface.
         y-cutoff: 32
         # Player must be at or above this Y coordinate for the absolute y-cutoff to apply.
-        player-y-trigger: 56
+        player-y-trigger: 36
         # Relative depth below player (in blocks). Sections/blocks deeper than this distance below player Y are auto-hidden (only below y-cutoff).
         vertical-distance-below-player: 32
         # Relative height above player (in blocks). Sections/blocks higher than this distance above player Y are auto-hidden (only when player is below y-cutoff).
@@ -75,7 +75,7 @@ engine:
     netty:
 block-processor:
     mode: packetevents
-    track-all-blocks: true
+    track-all-blocks: false
     packetevents:
         tile-entity-exempted-ids:
             #- 9779 - Beacon ID on 1.21.11. To see what the beacon ID is for your server version, run the command "/antiesp print-block-ids". This will dump a massive list of all the block ID to block name mappings in the console. Search your logs for "beacon" (or whatever other tile entity you'd like to exempt) and add the associated ID here

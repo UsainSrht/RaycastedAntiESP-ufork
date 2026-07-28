@@ -43,6 +43,18 @@ public final class PaperPacketEventsCommonViewController extends PacketEventsCom
         return worldIds.get(worldName);
     }
 
+    @Override
+    public User resolveUser(UUID viewerUUID) {
+        if (viewerUUID == null) {
+            return null;
+        }
+        org.bukkit.entity.Player player = Bukkit.getPlayer(viewerUUID);
+        if (player == null) {
+            return null;
+        }
+        return com.github.retrooper.packetevents.PacketEvents.getAPI().getPlayerManager().getUser(player);
+    }
+
     @EventHandler
     public void onWorldLoad(WorldLoadEvent event) {
         registerWorld(event.getWorld());

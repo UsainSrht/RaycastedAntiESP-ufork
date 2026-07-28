@@ -56,8 +56,6 @@ public abstract class PacketEventsEntityViewController extends PacketEntityViewC
 
     private final IntSupplier CURRENT_TICK_SUPPLIER;
     private final PacketEventsCommonViewController COMMON;
-    /** Set for the duration of {@link #onPacketSend} so section-gated destroys can write silently. */
-    private User currentViewer;
     private static PacketEventsEntityViewController SELF; //TODO Switch to LazyConstant once out of preview (see https://openjdk.org/jeps/526)
 
     public static PacketEventsEntityViewController get() {
@@ -119,27 +117,23 @@ public abstract class PacketEventsEntityViewController extends PacketEntityViewC
 
         UUID world = COMMON.resolvePacketWorld(playerData, event.getUser());
         int currentTick = CURRENT_TICK_SUPPLIER.getAsInt();
-        currentViewer = event.getUser();
-        try {
-            handleEntityPackets(event, event.getUser(), playerData, world, currentTick);
+        handleEntityPackets(event, event.getUser(), playerData, world, currentTick);
 
-            if (playerData.entityView().hasPendingTransitions() || playerData.playerView().hasPendingTransitions()) {
-                PlayerData transitionData = playerData;
-                User viewer = event.getUser();
-                event.getTasksAfterSend().add(() -> processPendingEntityTransitions(transitionData, viewer));
-            }
-
-            playerData.nettyData().evictPendingPostSpawnTasksIfRequired(currentTick);
-        } finally {
-            currentViewer = null;
+        if (playerData.entityView().hasPendingTransitions() || playerData.playerView().hasPendingTransitions()) {
+            PlayerData transitionData = playerData;
+            User viewer = event.getUser();
+            event.getTasksAfterSend().add(() -> processPendingEntityTransitions(transitionData, viewer));
         }
+
+        playerData.nettyData().evictPendingPostSpawnTasksIfRequired(currentTick);
     }
 
     @Override
     protected void forceHideEntityForHiddenSection(PlayerData playerData, NettyEntity<?,?> entity) {
         entity.setClientVisible(false);
-        if (currentViewer != null && entity.entityID() >= 0) {
-            currentViewer.writePacketSilently(new WrapperPlayServerDestroyEntities(entity.entityID()));
+        User viewer = COMMON.resolveUser(playerData.getPlayerUUID());
+        if (viewer != null && entity.entityID() >= 0) {
+            viewer.writePacketSilently(new WrapperPlayServerDestroyEntities(entity.entityID()));
         }
     }
 

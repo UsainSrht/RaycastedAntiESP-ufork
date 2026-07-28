@@ -5,6 +5,11 @@ import games.cubi.raycastedantiesp.core.config.raycast.HideBelowYConfig;
 import games.cubi.raycastedantiesp.core.raycast.ChunkSectionVisibilityUtil;
 
 import com.github.retrooper.packetevents.protocol.world.chunk.BaseChunk;
+import com.github.retrooper.packetevents.protocol.world.chunk.impl.v_1_18.Chunk_v1_18;
+import com.github.retrooper.packetevents.protocol.world.chunk.palette.DataPalette;
+import com.github.retrooper.packetevents.protocol.world.chunk.palette.PaletteType;
+import com.github.retrooper.packetevents.protocol.world.chunk.palette.SingletonPalette;
+import games.cubi.raycastedantiesp.core.chunks.ChunkData;
 
 import java.util.UUID;
 
@@ -85,7 +90,31 @@ public final class ChunkSectionParseContext {
         } else if (index >= unhiddenSections.length) {
             unhiddenSections = java.util.Arrays.copyOf(unhiddenSections, Math.max(unhiddenSections.length * 2, index + 1));
         }
-        unhiddenSections[index] = section;
+        if (section instanceof Chunk_v1_18 c18) {
+            unhiddenSections[index] = cloneChunkSection(c18);
+        } else {
+            unhiddenSections[index] = section;
+        }
+    }
+
+    public static Chunk_v1_18 cloneChunkSection(Chunk_v1_18 source) {
+        if (source == null) {
+            return null;
+        }
+        Chunk_v1_18 copy = source.getBiomeData() != null
+                ? new Chunk_v1_18(0, 0, new DataPalette(new SingletonPalette(0), null, PaletteType.CHUNK), source.getBiomeData())
+                : new Chunk_v1_18();
+        for (int y = 0; y < ChunkData.CHUNK_SIZE; y++) {
+            for (int z = 0; z < ChunkData.CHUNK_SIZE; z++) {
+                for (int x = 0; x < ChunkData.CHUNK_SIZE; x++) {
+                    int id = source.getBlockId(x, y, z);
+                    if (id != 0) {
+                        copy.set(x, y, z, id);
+                    }
+                }
+            }
+        }
+        return copy;
     }
 
     public BaseChunk[] unhiddenSections() {

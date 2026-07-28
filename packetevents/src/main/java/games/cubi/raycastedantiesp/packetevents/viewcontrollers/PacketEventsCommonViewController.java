@@ -35,6 +35,8 @@ public abstract class PacketEventsCommonViewController {
 
     public abstract UUID resolveWorldUUID(String worldName);
 
+    public abstract User resolveUser(UUID viewerUUID);
+
     public UUID resolvePacketWorld(PlayerData playerData, User user) {
         String trackedWorldName = playerData.nettyData().getCurrentWorldName();
         if (trackedWorldName != null) {

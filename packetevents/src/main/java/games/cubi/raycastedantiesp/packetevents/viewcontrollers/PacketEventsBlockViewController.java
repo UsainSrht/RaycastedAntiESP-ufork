@@ -698,9 +698,14 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
             DataPalette biomes = cached.biomePalette(i);
             BaseChunk unhidden = cached.unhiddenSection(i);
             if (visible) {
-                sections[i] = unhidden != null ? unhidden
+                BaseChunk sectionCandidate = unhidden != null ? unhidden
                         : buildWireSection(blockView.getBlockChunkData(cached.chunkX(), sectionY, cached.chunkZ()),
                                 biomes);
+                if (tileEntityConfig != null && tileEntityConfig.enabled() && sectionCandidate instanceof Chunk_v1_18 c18) {
+                    sections[i] = maskHiddenTilesInSection(blockView, world, cached.chunkX(), sectionY, cached.chunkZ(), c18);
+                } else {
+                    sections[i] = sectionCandidate;
+                }
             } else {
                 sections[i] = hiddenWireSection(biomes, sectionY);
             }
@@ -712,6 +717,32 @@ public abstract class PacketEventsBlockViewController implements PacketListener 
         } else {
             viewer.writePacketSilently(new WrapperPlayServerChunkData(column));
         }
+    }
+
+    private Chunk_v1_18 maskHiddenTilesInSection(BlockView blockView, UUID world, int chunkX, int sectionY, int chunkZ, Chunk_v1_18 section) {
+        if (world == null) {
+            return section;
+        }
+        int originX = chunkX << 4;
+        int originY = sectionY << 4;
+        int originZ = chunkZ << 4;
+        MutableBlockSpatialImpl key = new MutableBlockSpatialImpl(0, 0, 0);
+        Chunk_v1_18 copy = null;
+        for (int y = 0; y < ChunkData.CHUNK_SIZE; y++) {
+            for (int z = 0; z < ChunkData.CHUNK_SIZE; z++) {
+                for (int x = 0; x < ChunkData.CHUNK_SIZE; x++) {
+                    key.setBlockPosition(originX + x, originY + y, originZ + z);
+                    TrackedTileEntity<?> tile = blockView.getTrackedTileEntity(world, key);
+                    if (tile != null && !tile.visible()) {
+                        if (copy == null) {
+                            copy = ChunkSectionParseContext.cloneChunkSection(section);
+                        }
+                        copy.set(x, y, z, getHiddenBlockId(originY + y));
+                    }
+                }
+            }
+        }
+        return copy != null ? copy : section;
     }
 
     private static Column buildColumn(CachedWireColumn cached, BaseChunk[] sections) {
